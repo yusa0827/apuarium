@@ -16,8 +16,8 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # ---- シミュレーション設定 ----
 FISH_COUNT = 20
 TICK_HZ = 20          # 送信レート（20Hz = 50ms)
-SPEED_MIN = 0.025     # 規格化座標(0..1) / sec（遅くした）
-SPEED_MAX = 0.075     # 規格化座標(0..1) / sec（遅くした）
+SPEED_MIN = 0.015     # 規格化座標(0..1) / sec（さらに遅く）
+SPEED_MAX = 0.045     # 規格化座標(0..1) / sec（さらに遅く）
 TURN_NOISE = 0.7      # 向きのランダムゆらぎ（大きいほど曲がる）
 WALL_BOUNCE = 0.9     # 壁反射の強さ(0..1)
 VERTICAL_SPEED_RATIO = 0.5  # 上下方向の速度比率（横より遅くする）
