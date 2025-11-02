@@ -28,10 +28,12 @@ class Fish:
         self.id = idx
         self.x = random.random()
         self.y = random.random()
+        self.z = random.random()  # 奥行き（0=奥, 1=手前）
         self.dir = random.uniform(0, 2 * math.pi)  # 角度ラジアン
         self.speed = random.uniform(SPEED_MIN, SPEED_MAX)
         self.scale = random.uniform(0.8, 1.2)     # 見た目スケール（描画ヒント）
         self.flip = 1                              # 左右反転ヒント
+        self.z_speed = random.uniform(-0.02, 0.02)  # Z方向の速度
 
     def step(self, dt: float):
         # 少しずつ向きをランダムに変更（ゆらぎ）
@@ -85,6 +87,16 @@ class Fish:
         current_vx = math.cos(self.dir) * self.speed
         self.flip = 1 if current_vx < 0 else -1
 
+        # Z方向の移動（奥行き）
+        self.z += self.z_speed * dt
+        # Z方向の範囲制限（0.2〜1.0: 奥〜手前）
+        if self.z < 0.2:
+            self.z = 0.2
+            self.z_speed = abs(self.z_speed)  # 手前に向かう
+        elif self.z > 1.0:
+            self.z = 1.0
+            self.z_speed = -abs(self.z_speed)  # 奥に向かう
+
         self.x, self.y = nx, ny
 
     def to_dict(self) -> Dict[str, Any]:
@@ -92,6 +104,7 @@ class Fish:
             "id": self.id,
             "x": self.x,
             "y": self.y,
+            "z": self.z,  # 奥行き情報を追加
             "dir": self.dir,
             "scale": self.scale,
             "flip": self.flip,

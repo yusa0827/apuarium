@@ -73,15 +73,25 @@
       if (b.y < -10) bubbles.splice(i,1);
     }
 
-    // 魚
+    // 魚（3D効果：奥行きでソート）
     if (fishImg.complete && fishImg.naturalWidth > 0) {
-      fishState.forEach(f => {
+      // z値でソート（奥から手前の順に描画）
+      const sortedFish = [...fishState].sort((a, b) => (a.z || 0.5) - (b.z || 0.5));
+
+      sortedFish.forEach(f => {
+        const z = f.z || 0.5;  // デフォルト値
+
+        // 3D効果：奥行きに応じてサイズと透明度を変更
+        const depthScale = 0.4 + z * 0.6;  // 0.4〜1.0の範囲
+        const alpha = 0.5 + z * 0.5;        // 0.5〜1.0の範囲（薄く〜濃く）
+
         const px = f.x * w;
         const py = f.y * h;
-        const baseW = 64 * f.scale * (window.devicePixelRatio || 1);  // 32→64に拡大
-        const baseH = 40 * f.scale * (window.devicePixelRatio || 1);  // 20→40に拡大
+        const baseW = 64 * f.scale * depthScale * (window.devicePixelRatio || 1);
+        const baseH = 40 * f.scale * depthScale * (window.devicePixelRatio || 1);
 
         ctx.save();
+        ctx.globalAlpha = alpha;  // 透明度で奥行き感
         ctx.translate(px, py);
         // 向き：左右はflip、上下は微回転（dirはヒント程度）
         ctx.scale(f.flip, 1);  // 先にスケール
