@@ -80,9 +80,8 @@ class Fish:
                 self.speed = min(SPEED_MAX, self.speed * 1.05)
 
         # 左右の向きヒント（現在のdirから計算）
-        # goldfish.pngは左向き: 左向き(vx<0)→そのまま(1)、右向き(vx>0)→反転(-1)
         current_vx = math.cos(self.dir) * self.speed
-        self.flip = 1 if current_vx < 0 else -1
+        self.flip = -1 if current_vx < 0 else 1
 
         self.x, self.y = nx, ny
 
