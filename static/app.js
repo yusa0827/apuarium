@@ -78,8 +78,8 @@
       fishState.forEach(f => {
         const px = f.x * w;
         const py = f.y * h;
-        const baseW = 32 * f.scale * (window.devicePixelRatio || 1);
-        const baseH = 20 * f.scale * (window.devicePixelRatio || 1);
+        const baseW = 64 * f.scale * (window.devicePixelRatio || 1);  // 32→64に拡大
+        const baseH = 40 * f.scale * (window.devicePixelRatio || 1);  // 20→40に拡大
 
         ctx.save();
         ctx.translate(px, py);
