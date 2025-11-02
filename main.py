@@ -80,8 +80,7 @@ class Fish:
                 self.speed = min(SPEED_MAX, self.speed * 1.05)
 
         # 左右の向きヒント（x速度の符号で決める）
-        # goldfish.pngは左向き: 左に進む→そのまま(1)、右に進む→反転(-1)
-        self.flip = 1 if vx < 0 else -1
+        self.flip = -1 if vx < 0 else 1
 
         self.x, self.y = nx, ny
 
