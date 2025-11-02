@@ -36,6 +36,9 @@ class Fish:
         # 少しずつ向きをランダムに変更（ゆらぎ）
         self.dir += random.uniform(-TURN_NOISE, TURN_NOISE) * dt
 
+        # 角度を正規化（-π ~ π）
+        self.dir = math.atan2(math.sin(self.dir), math.cos(self.dir))
+
         # 速度ベクトル
         vx = math.cos(self.dir) * self.speed
         vy = math.sin(self.dir) * self.speed
@@ -44,28 +47,37 @@ class Fish:
         ny = self.y + vy * dt
 
         bounced = False
+        new_dir = self.dir
+
         # 壁で反射（0..1内に留める）
+        # コーナー反射のバグ修正：角度変更を一時変数で管理
         if nx < 0.02:
             nx = 0.02
-            self.dir = math.pi - self.dir
+            new_dir = math.pi - new_dir
             bounced = True
         elif nx > 0.98:
             nx = 0.98
-            self.dir = math.pi - self.dir
+            new_dir = math.pi - new_dir
             bounced = True
 
         if ny < 0.05:
             ny = 0.05
-            self.dir = -self.dir
+            new_dir = -new_dir
             bounced = True
         elif ny > 0.95:
             ny = 0.95
-            self.dir = -self.dir
+            new_dir = -new_dir
             bounced = True
 
-        # 反射時に少し減衰
+        # 反射時の処理
         if bounced:
+            self.dir = new_dir
+            # 反射時に少し減衰
             self.speed = max(SPEED_MIN, self.speed * (0.9 + 0.1 * WALL_BOUNCE))
+        else:
+            # 通常時にランダムで微加速（速度減衰のみの問題を改善）
+            if random.random() < 0.02:  # 2%の確率で加速
+                self.speed = min(SPEED_MAX, self.speed * 1.05)
 
         # 左右の向きヒント（x速度の符号で決める）
         self.flip = -1 if vx < 0 else 1
