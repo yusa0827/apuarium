@@ -84,9 +84,9 @@
         ctx.save();
         ctx.translate(px, py);
         // 向き：左右はflip、上下は微回転（dirはヒント程度）
+        ctx.scale(f.flip, 1);  // 先にスケール
         const angle = Math.atan2(Math.sin(f.dir), Math.cos(f.dir)) * 0.15;
-        ctx.rotate(angle);
-        ctx.scale(f.flip, 1);
+        ctx.rotate(angle);     // 後に回転
         ctx.drawImage(fishImg, -baseW/2, -baseH/2, baseW, baseH);
         ctx.restore();
       });
