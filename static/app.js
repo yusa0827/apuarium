@@ -14,7 +14,7 @@
 
   // ドット絵金魚のロード
   const fishImg = new Image();
-  fishImg.src = '/static/goldfish.png'; // 32x20 くらいのPNGを想定
+  fishImg.src = '/static/goldfish.png?v=' + Date.now(); // キャッシュバスター追加
 
   // 受信状態
   let fishState = []; // {id, x, y, dir, scale, flip}
