@@ -33,7 +33,7 @@ class Fish:
         self.speed = random.uniform(SPEED_MIN, SPEED_MAX)
         self.scale = random.uniform(0.8, 1.2)     # 見た目スケール（描画ヒント）
         self.flip = 1                              # 左右反転ヒント
-        self.z_speed = random.uniform(-0.02, 0.02)  # Z方向の速度
+        self.z_speed = random.uniform(-0.05, 0.05)  # Z方向の速度（速くして3D感を強調）
 
     def step(self, dt: float):
         # 少しずつ向きをランダムに変更（ゆらぎ）

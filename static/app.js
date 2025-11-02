@@ -81,14 +81,14 @@
       sortedFish.forEach(f => {
         const z = f.z || 0.5;  // デフォルト値
 
-        // 3D効果：奥行きに応じてサイズと透明度を変更
-        const depthScale = 0.4 + z * 0.6;  // 0.4〜1.0の範囲
-        const alpha = 0.5 + z * 0.5;        // 0.5〜1.0の範囲（薄く〜濃く）
+        // 3D効果：奥行きに応じてサイズと透明度を変更（より強調）
+        const depthScale = 0.3 + z * 0.7;  // 0.3〜1.0の範囲（より大きな差）
+        const alpha = 0.4 + z * 0.6;        // 0.4〜1.0の範囲（より強調）
 
         const px = f.x * w;
         const py = f.y * h;
-        const baseW = 64 * f.scale * depthScale * (window.devicePixelRatio || 1);
-        const baseH = 40 * f.scale * depthScale * (window.devicePixelRatio || 1);
+        const baseW = 192 * f.scale * depthScale * (window.devicePixelRatio || 1);  // 64→192に3倍
+        const baseH = 120 * f.scale * depthScale * (window.devicePixelRatio || 1);  // 40→120に3倍
 
         ctx.save();
         ctx.globalAlpha = alpha;  // 透明度で奥行き感
