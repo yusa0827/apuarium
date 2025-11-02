@@ -81,6 +81,12 @@
         const baseW = 32 * f.scale * (window.devicePixelRatio || 1);
         const baseH = 20 * f.scale * (window.devicePixelRatio || 1);
 
+        // デバッグ: 最初の魚だけログ出力
+        if (f.id === 0 && Math.random() < 0.01) {
+          const vx = Math.cos(f.dir);
+          console.log(`魚#${f.id}: dir=${f.dir.toFixed(2)}, vx=${vx.toFixed(2)} (${vx < 0 ? '左' : '右'}に進む), flip=${f.flip}`);
+        }
+
         ctx.save();
         ctx.translate(px, py);
         // 向き：左右はflip、上下は微回転（dirはヒント程度）
