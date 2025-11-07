@@ -45,7 +45,7 @@
   }
   setInterval(() => { for (let i = 0; i < 2; i++) spawnBubble(); }, 300);
 
-  function createFallbackFish(count = 10) {
+  function createFallbackFish(count = 8) {
     const fish = [];
     for (let i = 0; i < count; i++) {
       fish.push({
@@ -62,9 +62,10 @@
   }
 
   function activateFallback() {
-    if (fallbackActive) return;
-    fallbackActive = true;
-    fallbackFish = createFallbackFish();
+    if (!fallbackActive) {
+      fallbackActive = true;
+      fallbackFish = createFallbackFish();
+    }
     fishState = fallbackFish;
   }
 
@@ -181,33 +182,54 @@
   requestAnimationFrame(render);
 
   // WebSocket接続
-  const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(`${wsProto}://${location.host}/ws`);
+  let ws = null;
+  activateFallback();
   scheduleFallback();
-  ws.onmessage = (ev) => {
-    try {
-      const msg = JSON.parse(ev.data);
-      if (msg.type === 'state') {
-        const list = Array.isArray(msg.fish) ? msg.fish : [];
-        if (list.length > 0) {
-          fishState = list;
-          stopFallback();
-          clearFallbackTimer();
-        } else {
-          scheduleFallback(1000);
-          activateFallback();
+  try {
+    const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const host = location.host;
+    if (!host) {
+      throw new Error('WebSocket host is empty');
+    }
+    ws = new WebSocket(`${wsProto}://${host}/ws`);
+  } catch (err) {
+    console.warn('WebSocket を初期化できませんでした。オフラインモードに切り替えます。', err);
+  }
+
+  if (ws) {
+    ws.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === 'state') {
+          const list = Array.isArray(msg.fish) ? msg.fish : [];
+          if (list.length > 0) {
+            fishState = list;
+            stopFallback();
+            clearFallbackTimer();
+          } else {
+            scheduleFallback(1000);
+            activateFallback();
+          }
         }
+      } catch (e) {
+        console.warn('受信メッセージの解析に失敗しました', e);
       }
-    } catch (e) {}
-  };
-  ws.onopen = () => {
-    // 将来：設定変更など送る場合に使用
-    ws.send(JSON.stringify({type:'hello'}));
-  };
-  ws.onerror = () => {
-    activateFallback();
-  };
-  ws.onclose = () => {
-    activateFallback();
-  };
+    };
+    ws.onopen = () => {
+      // 将来：設定変更など送る場合に使用
+      try {
+        ws.send(JSON.stringify({ type: 'hello' }));
+      } catch (e) {
+        console.warn('WebSocket 初期メッセージ送信に失敗しました', e);
+      }
+    };
+    ws.onerror = () => {
+      scheduleFallback(1000);
+      activateFallback();
+    };
+    ws.onclose = () => {
+      scheduleFallback(1000);
+      activateFallback();
+    };
+  }
 })();
