@@ -69,6 +69,7 @@
   }
 
   function stopFallback() {
+    if (!fallbackActive) return;
     fallbackActive = false;
     fallbackFish = [];
   }
@@ -95,19 +96,20 @@
     });
   }
 
-  function scheduleFallback() {
-    if (fallbackTimer !== null) return;
+  function scheduleFallback(delay = 3000) {
+    if (fallbackTimer !== null) {
+      window.clearTimeout(fallbackTimer);
+    }
     fallbackTimer = window.setTimeout(() => {
-      activateFallback();
       fallbackTimer = null;
-    }, 3000);
+      activateFallback();
+    }, delay);
   }
 
   function clearFallbackTimer() {
-    if (fallbackTimer !== null) {
-      window.clearTimeout(fallbackTimer);
-      fallbackTimer = null;
-    }
+    if (fallbackTimer === null) return;
+    window.clearTimeout(fallbackTimer);
+    fallbackTimer = null;
   }
 
   // 描画ループ（サーバー更新は20Hz、描画はブラウザvsync）
@@ -186,10 +188,14 @@
     try {
       const msg = JSON.parse(ev.data);
       if (msg.type === 'state') {
-        fishState = msg.fish || [];
-        if (fishState.length > 0) {
+        const list = Array.isArray(msg.fish) ? msg.fish : [];
+        if (list.length > 0) {
+          fishState = list;
           stopFallback();
           clearFallbackTimer();
+        } else {
+          scheduleFallback(1000);
+          activateFallback();
         }
       }
     } catch (e) {}
@@ -197,7 +203,6 @@
   ws.onopen = () => {
     // 将来：設定変更など送る場合に使用
     ws.send(JSON.stringify({type:'hello'}));
-    clearFallbackTimer();
   };
   ws.onerror = () => {
     activateFallback();
