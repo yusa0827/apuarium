@@ -49,7 +49,7 @@
     modeButtons['3d'].addEventListener('click', () => updateMode('3d'));
   }
 
-  // リサイズ対応
+  // レイアウトに応じてキャンバスをリサイズ
   function fit() {
     const ratio = window.devicePixelRatio || 1;
     const holder = cv.parentElement;
@@ -78,12 +78,14 @@
 
   // 受信状態
   let fishState = []; // {id, x, y, dir, scale, flip}
-  let lastTs = performance.now();
+  let lastFrame = performance.now();
+  let fallbackTimer = null;
+  let fallbackActive = false;
+  let fallbackFish = [];
 
   // 簡易泡エフェクト
   const bubbles = [];
   function spawnBubble() {
-    // 下部からランダムに
     bubbles.push({
       x: Math.random() * cv.width,
       y: cv.height + Math.random() * 50,
@@ -92,7 +94,74 @@
       drift: (Math.random() - 0.5) * 0.3
     });
   }
-  setInterval(() => { for (let i=0;i<2;i++) spawnBubble(); }, 300);
+  setInterval(() => { for (let i = 0; i < 2; i++) spawnBubble(); }, 300);
+
+  function createFallbackFish(count = 10) {
+    const fish = [];
+    for (let i = 0; i < count; i++) {
+      fish.push({
+        id: `fallback-${i}`,
+        x: Math.random(),
+        y: Math.random(),
+        dir: Math.random() * Math.PI * 2,
+        scale: 0.8 + Math.random() * 0.4,
+        flip: 1,
+        speed: 0.03 + Math.random() * 0.07,
+      });
+    }
+    return fish;
+  }
+
+  function activateFallback() {
+    if (fallbackActive) return;
+    fallbackActive = true;
+    fallbackFish = createFallbackFish();
+    fishState = fallbackFish;
+  }
+
+  function stopFallback() {
+    if (!fallbackActive) return;
+    fallbackActive = false;
+    fallbackFish = [];
+  }
+
+  function updateFallbackFish(dt) {
+    if (!fallbackActive) return;
+    fallbackFish.forEach(f => {
+      f.dir += (Math.random() - 0.5) * 0.8 * dt;
+      const vx = Math.cos(f.dir) * f.speed;
+      const vy = Math.sin(f.dir) * f.speed;
+      f.x += vx * dt;
+      f.y += vy * dt;
+      let bounced = false;
+      if (f.x < 0.02) { f.x = 0.02; f.dir = Math.PI - f.dir; bounced = true; }
+      else if (f.x > 0.98) { f.x = 0.98; f.dir = Math.PI - f.dir; bounced = true; }
+      if (f.y < 0.05) { f.y = 0.05; f.dir = -f.dir; bounced = true; }
+      else if (f.y > 0.95) { f.y = 0.95; f.dir = -f.dir; bounced = true; }
+      if (bounced) {
+        f.speed = Math.max(0.02, f.speed * 0.9);
+      } else if (Math.random() < 0.02) {
+        f.speed = Math.min(0.12, f.speed * 1.05);
+      }
+      f.flip = vx < 0 ? -1 : 1;
+    });
+  }
+
+  function scheduleFallback(delay = 3000) {
+    if (fallbackTimer !== null) {
+      window.clearTimeout(fallbackTimer);
+    }
+    fallbackTimer = window.setTimeout(() => {
+      fallbackTimer = null;
+      activateFallback();
+    }, delay);
+  }
+
+  function clearFallbackTimer() {
+    if (fallbackTimer === null) return;
+    window.clearTimeout(fallbackTimer);
+    fallbackTimer = null;
+  }
 
   function initThree() {
     if (!hasThree || threeReady) return;
@@ -196,8 +265,15 @@
 
   // 描画ループ（サーバー更新は20Hz、描画はブラウザvsync）
   function render(ts) {
-    const dt = (ts - lastTs) / 1000;
-    lastTs = ts;
+    const w = cv.width;
+    const h = cv.height;
+    const ratio = window.devicePixelRatio || 1;
+    const dt = Math.min(0.05, Math.max(0.001, (ts - lastFrame) / 1000));
+    lastFrame = ts;
+
+    if (fallbackActive) {
+      updateFallbackFish(dt);
+    }
 
     updateBubbles(dt);
     if (currentMode === '2d') {
@@ -247,7 +323,7 @@
     for (let i=0; i<bubbles.length; i++) {
       const b = bubbles[i];
       ctx.beginPath();
-      ctx.arc(b.x, b.y, b.r, 0, Math.PI*2);
+      ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
       ctx.fillStyle = 'rgba(200,240,255,0.6)';
       ctx.fill();
     }
@@ -276,6 +352,7 @@
   // WebSocket接続
   const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${wsProto}://${location.host}/ws`);
+  scheduleFallback();
   ws.onmessage = (ev) => {
     try {
       const msg = JSON.parse(ev.data);
@@ -288,5 +365,11 @@
   ws.onopen = () => {
     // 将来：設定変更など送る場合に使用
     ws.send(JSON.stringify({type:'hello'}));
+  };
+  ws.onerror = () => {
+    activateFallback();
+  };
+  ws.onclose = () => {
+    activateFallback();
   };
 })();
