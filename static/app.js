@@ -93,6 +93,7 @@
       vy: - (0.3 + Math.random() * 0.7) * (window.devicePixelRatio || 1),
       drift: (Math.random() - 0.5) * 0.3
     });
+    fishActors.set(id, actor);
   }
   setInterval(() => { for (let i = 0; i < 2; i++) spawnBubble(); }, 300);
 
