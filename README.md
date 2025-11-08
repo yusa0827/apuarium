@@ -1,74 +1,113 @@
-# Apuarium – 3D 金魚の Web 水槽
+# コンセプト
+魚がいるアクアリウムを鑑賞して、癒されること、楽しめること
 
-Three.js と FastAPI を使って、プロシージャルに生成した 3D 金魚モデルを Web ブラウザ上で泳がせるデモです。サーバーは WebSocket で金魚の隊列データを配信し、クライアントは glTF 形式の金魚モデルを複製して水槽内を遊泳させます。
 
-## 主な特徴
-- **プロシージャルな 3D 金魚モデル** – `tools/generate_goldfish_gltf.py` が glTF (JSON) を生成し、Three.js が直接読み込みます。大きな頬と丸い瞳を備えたキュートな造形をスクリプトだけで再現しています。
-- **WebGL ベースの疑似水槽** – 水槽の壁、ボリュームフォグ、ライトをセットアップし、奥行き感のある環境で金魚を描画します。
-- **リアルタイムな群泳制御** – FastAPI で動作するシミュレーションが 20Hz で魚の位置と向きを配信し、未接続時はクライアント側でフォールバック群泳を生成します。
-- **GPU 不要の軽量設計** – モデルは 10k 未満のポリゴンで構成され、ブラウザだけでアニメーションが完結します。
+# ディレクトリ構成
+aquarium/
+├─ main.py                # FastAPI + WebSocket（既存のWeb向け2D/3Dクライアント用）
+├─ requirements.txt
+├─ python_sim/            # Pythonのみで動く3D金魚モデルと水槽シミュレーション
+│  ├─ __init__.py
+│  ├─ __main__.py        # `python -m python_sim` でCLI起動
+│  ├─ model.py           # 金魚メッシュの生成とOBJ書き出し
+│  └─ simulation.py      # Matplotlibによる水槽内アニメーション
+└─ static/
+   ├─ index.html          # Webクライアント（Three.jsベース）
+   └─ app.js              # Three.js シーンセットアップとWS受信
 
-## ディレクトリ構成
+
+# 要件
+LAN内自宅/社内サーバ: Windowsのファイアウォール例外、ブラウザからの接続のためホスト0.0.0.0で起動、社内DNS/固定IP/ポート解放を検討。　　
+WebSocket: 1ルーム（全員同じ水槽）でOK。将来は部屋IDで多水槽に拡張可。　　
+2D/ドット絵: サーバー側でPNGを配布します（ドット絵金魚）。クライアントCanvasにスケーリングして描画。　　
+エフェクト（泡/水流）: あり。クライアントで軽量に生成（魚とは独立）。負荷低いです。　　
+20匹: サーバーで20体の座標を20Hzで送信（十分滑らか、負荷軽い）。将来負荷に応じてチューニング。　　
+“Pythonライブラリを使う”: WebサーバーはFastAPI/uvicorn/websockets。ローカルで3Dモデルを扱いたい場合は
+`python_sim` パッケージを利用することで GPU を使わずに Python/NumPy/Matplotlib だけで金魚と水槽のアニメーションを
+動かせます。
+将来の追加: エサ・群泳（boids）・DB設定保存・HTTPS/TLS・認証は後で足せます。
+
+
+# Pythonベースの3D金魚シミュレーション
+
+GPU が無い環境でも動かせるよう、金魚メッシュを数百ポリゴンで構成し、Matplotlib の 3D 描画で水槽内を泳ぐ様子を
+再現します。`python_sim` パッケージは以下の 2 つの用途で利用できます。
+
+1. OBJ ファイルとして金魚メッシュをエクスポートする
+2. Python 内で 3D 水槽アニメーションを再生する
+
+## インストール
+
 ```
-apuarium/
-├─ main.py                  # FastAPI + WebSocket サーバー
-├─ requirements.txt         # 必要な Python 依存
-├─ static/
-│  ├─ index.html            # Three.js を読み込むトップページ
-│  ├─ app.js                # WebGL 水槽と金魚ロジック（ES Module）
-│  └─ models/
-│     └─ goldfish.gltf      # プロシージャル生成済み 3D モデル
-└─ tools/
-   └─ generate_goldfish_gltf.py  # glTF 再生成用スクリプト
+pip install -r requirements.txt
 ```
 
-## セットアップと起動
+## OBJ ファイルを書き出す
+
+```
+python -m python_sim --export goldfish.obj
+```
+
+出力された `goldfish.obj` は頂点カラーを含んでいるので、DCC ツールに取り込んで質感調整に活用できます。
+
+## 水槽アニメーションを再生する
+
+```
+python -m python_sim --fish 5 --seconds 60 --fps 24
+```
+
+Matplotlib のウィンドウが開き、金魚が水槽内をゆっくり泳ぎます。`--seed` を指定すると同じ動きを再現できます。
+
+
+# 起動
+pip install -r requirements.txt
+python -m uvicorn main:app --host 0.0.0.0 --port 8000
+
+# アクセス方法
+サーバー起動後、ブラウザから以下のURLでアクセスできます：
+
+## 同じPCからアクセスする場合
+http://localhost:8000
+または
+http://127.0.0.1:8000
+
+## LAN内の他のデバイスからアクセスする場合
+サーバーのローカルIPアドレスを確認して、そのIPアドレス:8000でアクセスします。
+
+### Windowsの場合（IPアドレス確認）
+ipconfig
+→ 「IPv4 アドレス」を確認（例：192.168.1.100）
+→ ブラウザから http://192.168.1.100:8000 でアクセス
+
+### macOS/Linuxの場合（IPアドレス確認）
+ip addr show
+または
+ifconfig
+→ inet の値を確認（例：192.168.1.100）
+→ ブラウザから http://192.168.1.100:8000 でアクセス
+
+※ 0.0.0.0 はサーバー側の設定で、クライアントからアクセスするアドレスではありません。
+## Pythonベースの3D金魚シミュレーション
+GPU がない環境でも 3D 金魚を扱えるよう、完全に Python で動作するプロシージャルモデリングと描画パイプラインを追加しました。
+
 1. 依存パッケージをインストールします。
    ```bash
    pip install -r requirements.txt
    ```
-2. 開発サーバーを起動します。
+2. プロシージャルに生成した金魚メッシュを OBJ として書き出したい場合は以下を実行します。
    ```bash
-   python -m uvicorn main:app --host 0.0.0.0 --port 8000
+   python scripts/export_goldfish.py  # assets/goldfish.obj が生成されます
    ```
-3. ブラウザで `http://localhost:8000` を開くと、3D 水槽が表示されます。LAN 内の別デバイスからアクセスする場合は、サーバーのローカル IP アドレスを利用してください。
+3. CPU レンダラで水槽シミュレーションを再生・保存するには次を実行します。
+   ```bash
+   python scripts/run_aquarium.py --fish 8 --seconds 45 --fps 20
+   ```
+   `--save` にファイルパス（例: `--save out.mp4`）を指定すると、Matplotlib のアニメーションとして保存できます。
 
-## 3D 金魚モデルの再生成
-`static/models/goldfish.gltf` は `tools/generate_goldfish_gltf.py` によりプロシージャルに生成されています。ボディの頂点カラーや半透明なヒレ、瞳のサイズなども Python スクリプト内で定義されているため、数値を変えるだけで好みの“かわいい”スタイルに作り直せます。
-```bash
-python tools/generate_goldfish_gltf.py
-```
+`aquarium3d/` パッケージには以下のモジュールが含まれます。
 
-## WebSocket データ仕様
-サーバー (`main.py`) は以下の JSON を 20Hz で送信します。
-```json
-{
-  "type": "state",
-  "fish": [
-    {
-      "id": 0,
-      "x": 0.42,
-      "y": 0.58,
-      "z": 0.66,
-      "scale": 1.05,
-      "vx": 0.03,
-      "vy": -0.01,
-      "vz": 0.02,
-      "speed": 0.04,
-      "heading": {"x": 0.62, "y": -0.21, "z": 0.75}
-    },
-    ...
-  ]
-}
-```
-- `x`, `y`, `z`: 規格化座標 (0〜1)。クライアント側で 3D 水槽空間にマッピングします。
-- `scale`: 見た目サイズのヒント。個体差を付ける用途です。
-- `vx`, `vy`, `vz`: 単位空間あたりの速度ベクトル。姿勢補間やアニメーション速度に利用します。
-- `speed`: ベクトル長（移動スピード）。
-- `heading`: 正規化済みの進行方向ベクトル。速度が極端に小さい際の代替になります。
-- `dir`, `flip`: 後方互換のために残している 2D 向き情報。新フロントエンドでは補助的に参照されます。
+- `goldfish.py`: 金魚のボディ・ヒレをスイープ生成し、OBJ に書き出せる三角メッシュを返します。
+- `simulation.py`: 単純な群泳アルゴリズムで水槽内を遊泳させる CPU シミュレーションを提供します。
+- `renderer.py`: Matplotlib で水槽・水面・金魚メッシュを描画し、アニメーション出力にも対応します。
 
-クライアントは WebSocket 未接続または空配信時でも、フォールバックの 3D 群泳を生成して水槽を維持します。
-
-## ライセンス
-プロジェクト内のコードおよび生成されたモデルは MIT License で提供します。商用利用や改変も自由に行えますが、再配布時はライセンス表記を残してください。
+既存の FastAPI + WebSocket サーバーは `main.py` に残しているため、ブラウザ向け 2D 表示が必要な場合も従来どおり利用できます。

@@ -1,10 +1,9 @@
 """Procedural goldfish mesh generator that exports a glTF asset.
 
-The generator sculpts a stylised, super-deformed ranchu-inspired goldfish with a
-pudgy head, flowing double tail, and translucent fins. Everything is produced
-mathematically so no bitmap textures are required. The resulting mesh is still
-compact enough to ship with the repository while containing enough curvature for
-Three.js to light it believably.
+The script creates a lightweight, rig-friendly goldfish model composed of a body,
+fan tail, dorsal fin, pectoral fins, and pelvic fin. The geometry is analytic and
+kept small enough to ship with the repository, while still providing enough detail
+for smooth shading and subtle animation in the WebGL viewer.
 
 Run directly to overwrite ``static/models/goldfish.gltf``.
 """
@@ -16,7 +15,7 @@ import math
 import struct
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, List, Sequence, Tuple
+from typing import Callable, Iterable, List, Sequence, Tuple
 
 Vec3 = Tuple[float, float, float]
 
@@ -27,37 +26,25 @@ class AttributeBundle:
     normal: List[float]
     uv: List[float]
     indices: List[int]
-    color: List[float] | None = None
 
 
 def lerp(a: float, b: float, t: float) -> float:
     return a + (b - a) * t
 
 
-def clamp(x: float, low: float, high: float) -> float:
-    return max(low, min(high, x))
-
-
-def smoothstep(edge0: float, edge1: float, x: float) -> float:
-    t = clamp((x - edge0) / (edge1 - edge0 or 1e-6), 0.0, 1.0)
-    return t * t * (3 - 2 * t)
-
-
 def profile_radius(s: float) -> float:
-    head = math.exp(-((s - 0.08) / 0.18) ** 2) * 0.1
-    belly = math.exp(-((s - 0.42) / 0.28) ** 2) * 0.22
-    peduncle = math.exp(-((s - 0.72) / 0.2) ** 2) * 0.1
-    tail_root = math.exp(-((s - 0.9) / 0.12) ** 2) * 0.05
-    return 0.04 + head + belly + peduncle + tail_root
+    head = math.exp(-((s - 0.1) / 0.25) ** 2) * 0.06
+    mid = math.exp(-((s - 0.45) / 0.32) ** 2) * 0.18
+    tail = math.exp(-((s - 0.85) / 0.18) ** 2) * 0.06
+    return head + mid + tail + 0.02
 
 
 def build_body() -> AttributeBundle:
-    segments_len = 48
-    segments_rad = 36
+    segments_len = 40
+    segments_rad = 32
     positions: List[float] = []
     normals: List[float] = []
     uvs: List[float] = []
-    colors: List[float] = []
 
     length = 0.35 - (-0.55)
 
@@ -92,38 +79,6 @@ def build_body() -> AttributeBundle:
             normals.extend((nx / length_n, ny / length_n, nz / length_n))
             uvs.extend((s, t))
 
-            # Vertex color palette blending for an even cuter look
-            norm_y = clamp((y / (r + 1e-6) + 1.0) * 0.5, 0.0, 1.0)
-            norm_z = clamp((z / (r + 1e-6) + 1.0) * 0.5, 0.0, 1.0)
-            length_mix = smoothstep(0.12, 0.82, s)
-            cheek = math.exp(-((s - 0.82) / 0.11) ** 2) * 0.65
-            gill = math.exp(-((s - 0.27) / 0.06) ** 2) * 0.4
-            sparkle = clamp(0.4 + 0.6 * max(0.0, nz), 0.0, 1.0)
-
-            belly_color = (1.0, 0.92, 0.83)
-            mid_color = (1.0, 0.63, 0.38)
-            top_color = (1.0, 0.46, 0.24)
-            cheek_color = (1.0, 0.54, 0.5)
-            gill_color = (1.0, 0.5, 0.4)
-
-            top_mix = tuple(
-                belly_color[i] * (1.0 - norm_y) + top_color[i] * norm_y for i in range(3)
-            )
-            warm = tuple(
-                top_mix[i] * (1.0 - 0.45 * length_mix) + mid_color[i] * (0.45 * length_mix)
-                for i in range(3)
-            )
-            cheek_mix = tuple(
-                warm[i] * (1.0 - cheek) + cheek_color[i] * cheek for i in range(3)
-            )
-            gilled = tuple(
-                cheek_mix[i] * (1.0 - gill) + gill_color[i] * gill for i in range(3)
-            )
-            highlight = tuple(
-                min(1.0, gilled[i] + 0.09 * sparkle + 0.04 * (1.0 - norm_z)) for i in range(3)
-            )
-            colors.extend((*highlight, 1.0))
-
     indices: List[int] = []
     stride = segments_rad + 1
     for j in range(segments_len):
@@ -135,45 +90,26 @@ def build_body() -> AttributeBundle:
             indices.extend((a, b, d))
             indices.extend((b, c, d))
 
-    return AttributeBundle(positions, normals, uvs, indices, colors)
+    return AttributeBundle(positions, normals, uvs, indices)
 
 
 def tail_point(u: float, v: float) -> Vec3:
-    length = 0.68
+    span = 0.5
+    length = 0.65
     x = -0.55 - length * u
-    centre = v - 0.5
-    sign = 1.0 if centre >= 0 else -1.0
-    spread = 0.55 + 0.35 * (1.0 - u)
-    lobe = (abs(centre) ** 0.55) * spread
-    pinch = smoothstep(0.0, 0.45, abs(centre))
-    ribbon = 0.12 * (1.0 - u) * (1.0 - pinch)
-
-    y = sign * lobe * (0.58 + 0.28 * (1.0 - u)) + ribbon
-    z = sign * lobe * (0.96 + 0.32 * (1.0 - u))
-
-    sweep = math.sin(u * math.pi * 0.6) * 0.22
-    flutter = math.sin((v - 0.5) * math.pi * 2.6) * 0.05 * (1.0 - u)
-    z += sweep * (1.0 - abs(centre) * 1.6) + flutter
-    y += math.cos(u * math.pi * 1.1) * 0.03 * sign * (1.0 - abs(centre) * 1.4)
-
-    notch = (1.0 - smoothstep(0.1, 0.32, abs(centre)))
-    y += notch * 0.08 * (1.0 - u)
-    z -= sign * notch * 0.03 * (1.0 - u)
-
-    return (x, y * 0.58, z)
+    flare = (1 - u) ** 0.4
+    y = (v - 0.5) * span * (0.6 + 0.8 * (1 - flare))
+    z = (v - 0.5) * span * 1.4 * flare
+    sweep = math.sin(u * math.pi * 0.5) * 0.18
+    z += sweep * (1 - abs(v - 0.5) * 1.8)
+    return (x, y * 0.6, z)
 
 
-def build_grid(
-    u_count: int,
-    v_count: int,
-    func: Callable[[float, float], Vec3],
-    color_func: Callable[[float, float, Vec3, Vec3], Tuple[float, float, float, float]] | None = None,
-) -> AttributeBundle:
+def build_grid(u_count: int, v_count: int, func: Callable[[float, float], Vec3]) -> AttributeBundle:
     positions: List[float] = []
     normals: List[float] = []
     uvs: List[float] = []
     indices: List[int] = []
-    colors: List[float] = []
 
     def partial(u: float, v: float, axis: int) -> Vec3:
         delta = 1e-3
@@ -200,15 +136,8 @@ def build_grid(
             ny = du[2] * dv[0] - du[0] * dv[2]
             nz = du[0] * dv[1] - du[1] * dv[0]
             length_n = math.sqrt(nx * nx + ny * ny + nz * nz) or 1.0
-            nx /= length_n
-            ny /= length_n
-            nz /= length_n
-            normals.extend((nx, ny, nz))
+            normals.extend((nx / length_n, ny / length_n, nz / length_n))
             uvs.extend((u, v))
-
-            if color_func is not None:
-                cr, cg, cb, ca = color_func(u, v, (px, py, pz), (nx, ny, nz))
-                colors.extend((cr, cg, cb, ca))
 
     stride = u_count + 1
     for j in range(v_count):
@@ -220,7 +149,7 @@ def build_grid(
             indices.extend((a, b, d))
             indices.extend((b, c, d))
 
-    return AttributeBundle(positions, normals, uvs, indices, colors if color_func else None)
+    return AttributeBundle(positions, normals, uvs, indices)
 
 
 def mirror_positions(data: Sequence[float], axis: str = "z") -> List[float]:
@@ -241,94 +170,44 @@ def mirror_normals(data: Sequence[float], axis: str = "z") -> List[float]:
 
 
 def build_tail() -> AttributeBundle:
-    def tail_color(u: float, v: float, pos: Vec3, normal: Vec3) -> Tuple[float, float, float, float]:
-        tip = smoothstep(0.2, 1.0, u)
-        centre = abs(v - 0.5) * 2.0
-        lace = math.cos((1.0 - u) * 2.8 + centre * 3.2) * 0.5 + 0.5
-        base = (1.0, 0.76, 0.56)
-        tip_tint = (1.0, 0.5, 0.38)
-        rim = (1.0, 0.6, 0.48)
-        mix = tuple(base[i] * (1.0 - tip) + tip_tint[i] * tip for i in range(3))
-        color = tuple(
-            min(1.0, mix[i] * (0.92 + 0.08 * lace) + rim[i] * (0.12 * (1.0 - centre)))
-            for i in range(3)
-        )
-        alpha = clamp(0.82 - 0.55 * tip + 0.18 * (1.0 - centre), 0.28, 0.88)
-        shimmer = clamp(0.55 + 0.45 * max(0.0, normal[2]), 0.0, 1.0)
-        color = tuple(min(1.0, c + 0.05 * shimmer) for c in color)
-        return (*color, alpha)
-
-    return build_grid(20, 12, tail_point, tail_color)
+    return build_grid(20, 12, tail_point)
 
 
 def build_dorsal() -> AttributeBundle:
     def dorsal_func(u: float, v: float) -> Vec3:
-        span = 0.32
-        height = 0.26
-        x = lerp(-0.22, 0.28, u)
-        crown = math.sin((u + 0.2) * math.pi * 0.7) ** 1.6
-        y = 0.14 + crown * height * (1 - abs(v - 0.5) * 0.5)
-        z = (v - 0.5) * span * (0.45 + 0.4 * (1 - u))
-        z += math.sin((v - 0.5) * math.pi * 2.0) * 0.05 * (1 - u)
+        span = 0.26
+        height = 0.24
+        x = lerp(-0.18, 0.24, u)
+        y = 0.12 + (1 - (u - 0.1) ** 2 * 1.8) * height * (1 - abs(v - 0.5) * 0.4)
+        z = (v - 0.5) * span * (0.5 + (1 - u) * 0.3)
         return (x, y, z)
 
-    def dorsal_color(u: float, v: float, pos: Vec3, normal: Vec3) -> Tuple[float, float, float, float]:
-        tip = smoothstep(0.15, 1.0, u)
-        edge = abs(v - 0.5) * 2.0
-        base = (1.0, 0.74, 0.54)
-        tip_tint = (1.0, 0.56, 0.4)
-        color = tuple(base[i] * (1.0 - tip) + tip_tint[i] * tip for i in range(3))
-        color = tuple(min(1.0, color[i] + 0.04 * (1.0 - edge)) for i in range(3))
-        alpha = clamp(0.8 - 0.45 * tip - 0.15 * edge, 0.3, 0.85)
-        return (*color, alpha)
-
-    return build_grid(10, 6, dorsal_func, dorsal_color)
+    return build_grid(10, 6, dorsal_func)
 
 
 def build_pectoral_left() -> AttributeBundle:
     def pectoral_func(u: float, v: float) -> Vec3:
-        spread = 0.28
-        x = lerp(0.01, 0.32, u)
-        y = -0.035 + math.sin(u * math.pi * 0.9) * 0.07 - v * 0.02
-        z = 0.14 + (v - 0.5) * spread
-        x += math.sin((v - 0.5) * math.pi) * 0.035
-        y += math.sin(u * math.pi * 0.7) * 0.025
-        z += math.sin(u * math.pi * 1.3) * 0.015
+        spread = 0.22
+        x = lerp(0.02, 0.28, u)
+        y = -0.03 + math.sin(u * math.pi) * 0.06 - v * 0.02
+        z = 0.12 + (v - 0.5) * spread
+        x += math.sin((v - 0.5) * math.pi) * 0.03
+        y += math.sin(u * math.pi * 0.5) * 0.02
         return (x, y, z)
 
-    def pectoral_color(u: float, v: float, pos: Vec3, normal: Vec3) -> Tuple[float, float, float, float]:
-        root = smoothstep(0.0, 0.28, u)
-        tip = smoothstep(0.45, 1.0, u)
-        warm = (1.0, 0.76, 0.58)
-        cool = (1.0, 0.6, 0.48)
-        color = tuple(warm[i] * (1.0 - tip) + cool[i] * tip for i in range(3))
-        color = tuple(color[i] * (0.9 + 0.12 * root) for i in range(3))
-        alpha = clamp(0.74 - 0.4 * tip + 0.06 * (1.0 - abs(v - 0.5) * 2.0), 0.25, 0.82)
-        return (*color, alpha)
-
-    return build_grid(8, 4, pectoral_func, pectoral_color)
+    return build_grid(8, 4, pectoral_func)
 
 
 def build_pelvic() -> AttributeBundle:
     def pelvic_func(u: float, v: float) -> Vec3:
-        spread = 0.22
-        x = lerp(-0.16, 0.08, u)
-        y = -0.13 + (1 - u) * -0.05 + (v - 0.5) * 0.012
+        spread = 0.18
+        x = lerp(-0.12, 0.1, u)
+        y = -0.12 + (1 - u) * -0.04 + (v - 0.5) * 0.01
         z = (v - 0.5) * spread
-        y += math.sin(u * math.pi * 0.9) * 0.045
-        z += math.sin((v - 0.5) * math.pi) * 0.015
+        y += math.sin(u * math.pi) * 0.04
         return (x, y, z)
 
-    def pelvic_color(u: float, v: float, pos: Vec3, normal: Vec3) -> Tuple[float, float, float, float]:
-        tip = smoothstep(0.25, 1.0, u)
-        blush = (1.0, 0.62, 0.46)
-        pale = (1.0, 0.8, 0.62)
-        color = tuple(pale[i] * (1.0 - tip) + blush[i] * tip for i in range(3))
-        color = tuple(min(1.0, color[i] + 0.05 * (1.0 - abs(v - 0.5) * 2.0)) for i in range(3))
-        alpha = clamp(0.72 - 0.42 * tip, 0.28, 0.78)
-        return (*color, alpha)
-
-    return build_grid(6, 4, pelvic_func, pelvic_color)
+    return build_grid(6, 4, pelvic_func)
 
 
 def pack_floats(values: Sequence[float]) -> bytes:
@@ -337,44 +216,6 @@ def pack_floats(values: Sequence[float]) -> bytes:
 
 def pack_indices(values: Sequence[int]) -> bytes:
     return struct.pack("<%sH" % len(values), *values)
-
-
-def build_eye(radius: float, lat_segments: int, lon_segments: int) -> AttributeBundle:
-    positions: List[float] = []
-    normals: List[float] = []
-    uvs: List[float] = []
-    indices: List[int] = []
-
-    for iy in range(lat_segments + 1):
-        v = iy / lat_segments
-        phi = v * math.pi
-        sin_phi = math.sin(phi)
-        cos_phi = math.cos(phi)
-
-        for ix in range(lon_segments + 1):
-            u = ix / lon_segments
-            theta = u * math.tau
-            sin_theta = math.sin(theta)
-            cos_theta = math.cos(theta)
-
-            nx = sin_phi * cos_theta
-            ny = cos_phi
-            nz = sin_phi * sin_theta
-            positions.extend((radius * nx, radius * ny, radius * nz))
-            normals.extend((nx, ny, nz))
-            uvs.extend((u, v))
-
-    stride = lon_segments + 1
-    for iy in range(lat_segments):
-        for ix in range(lon_segments):
-            a = iy * stride + ix
-            b = a + stride
-            c = b + 1
-            d = a + 1
-            indices.extend((a, b, d))
-            indices.extend((b, c, d))
-
-    return AttributeBundle(positions, normals, uvs, indices)
 
 
 def add_attribute(
@@ -388,7 +229,7 @@ def add_attribute(
 ) -> int:
     if component_type == 5126:
         data = pack_floats(array)  # type: ignore[arg-type]
-        comps = {"VEC2": 2, "VEC3": 3, "VEC4": 4}[accessor_type]
+        comps = {"VEC2": 2, "VEC3": 3}[accessor_type]
         count = len(array) // comps
         mins = [min(array[i::comps]) for i in range(comps)]
         maxs = [max(array[i::comps]) for i in range(comps)]
@@ -436,47 +277,26 @@ def write_gltf(output: Path) -> None:
         mirror_normals(pect_l.normal, "z"),
         list(pect_l.uv),
         list(pect_l.indices),
-        list(pect_l.color) if pect_l.color else None,
     )
     pelvic = build_pelvic()
-    eye_white = build_eye(0.085, 16, 22)
-    eye_pupil = build_eye(0.04, 12, 18)
 
     buffer = bytearray()
     buffer_views: List[dict] = []
     accessors: List[dict] = []
 
-    def add_bundle(
-        bundle: AttributeBundle,
-        target: int = 34962,
-        index_target: int = 34963,
-    ) -> Tuple[dict, int]:
-        attributes = {
-            "POSITION": add_attribute(buffer, buffer_views, accessors, bundle.position, 5126, "VEC3", target),
-            "NORMAL": add_attribute(buffer, buffer_views, accessors, bundle.normal, 5126, "VEC3", target),
-            "TEXCOORD_0": add_attribute(buffer, buffer_views, accessors, bundle.uv, 5126, "VEC2", target),
-        }
-        if bundle.color:
-            attributes["COLOR_0"] = add_attribute(
-                buffer,
-                buffer_views,
-                accessors,
-                bundle.color,
-                5126,
-                "VEC4",
-                target,
-            )
+    def add_bundle(bundle: AttributeBundle, target: int = 34962, index_target: int = 34963) -> Tuple[int, int, int, int]:
+        pos = add_attribute(buffer, buffer_views, accessors, bundle.position, 5126, "VEC3", target)
+        normal = add_attribute(buffer, buffer_views, accessors, bundle.normal, 5126, "VEC3", target)
+        uv = add_attribute(buffer, buffer_views, accessors, bundle.uv, 5126, "VEC2", target)
         idx = add_attribute(buffer, buffer_views, accessors, bundle.indices, 5123, "SCALAR", index_target)
-        return attributes, idx
+        return pos, normal, uv, idx
 
-    body_attr, body_idx = add_bundle(body)
-    tail_attr, tail_idx = add_bundle(tail)
-    dorsal_attr, dorsal_idx = add_bundle(dorsal)
-    pect_l_attr, pect_l_idx = add_bundle(pect_l)
-    pect_r_attr, pect_r_idx = add_bundle(pect_r)
-    pelvic_attr, pelvic_idx = add_bundle(pelvic)
-    eye_white_attr, eye_white_idx = add_bundle(eye_white)
-    eye_pupil_attr, eye_pupil_idx = add_bundle(eye_pupil)
+    body_pos, body_nor, body_uv, body_idx = add_bundle(body)
+    tail_pos, tail_nor, tail_uv, tail_idx = add_bundle(tail)
+    dorsal_pos, dorsal_nor, dorsal_uv, dorsal_idx = add_bundle(dorsal)
+    pect_l_pos, pect_l_nor, pect_l_uv, pect_l_idx = add_bundle(pect_l)
+    pect_r_pos, pect_r_nor, pect_r_uv, pect_r_idx = add_bundle(pect_r)
+    pelvic_pos, pelvic_nor, pelvic_uv, pelvic_idx = add_bundle(pelvic)
 
     buffer_uri = "data:application/octet-stream;base64," + base64.b64encode(buffer).decode()
 
@@ -501,24 +321,6 @@ def write_gltf(output: Path) -> None:
             "doubleSided": True,
             "emissiveFactor": [0.05, 0.02, 0.01],
         },
-        {
-            "name": "EyeWhite",
-            "pbrMetallicRoughness": {
-                "baseColorFactor": [1.0, 0.98, 0.95, 1.0],
-                "metallicFactor": 0.0,
-                "roughnessFactor": 0.35,
-            },
-            "emissiveFactor": [0.15, 0.15, 0.18],
-        },
-        {
-            "name": "EyePupil",
-            "pbrMetallicRoughness": {
-                "baseColorFactor": [0.08, 0.08, 0.12, 1.0],
-                "metallicFactor": 0.0,
-                "roughnessFactor": 0.1,
-            },
-            "emissiveFactor": [0.02, 0.02, 0.04],
-        },
     ]
 
     meshes = [
@@ -526,7 +328,11 @@ def write_gltf(output: Path) -> None:
             "name": "Body",
             "primitives": [
                 {
-                    "attributes": body_attr,
+                    "attributes": {
+                        "POSITION": body_pos,
+                        "NORMAL": body_nor,
+                        "TEXCOORD_0": body_uv,
+                    },
                     "indices": body_idx,
                     "material": 0,
                 }
@@ -536,7 +342,11 @@ def write_gltf(output: Path) -> None:
             "name": "Tail",
             "primitives": [
                 {
-                    "attributes": tail_attr,
+                    "attributes": {
+                        "POSITION": tail_pos,
+                        "NORMAL": tail_nor,
+                        "TEXCOORD_0": tail_uv,
+                    },
                     "indices": tail_idx,
                     "material": 1,
                 }
@@ -546,7 +356,11 @@ def write_gltf(output: Path) -> None:
             "name": "Dorsal",
             "primitives": [
                 {
-                    "attributes": dorsal_attr,
+                    "attributes": {
+                        "POSITION": dorsal_pos,
+                        "NORMAL": dorsal_nor,
+                        "TEXCOORD_0": dorsal_uv,
+                    },
                     "indices": dorsal_idx,
                     "material": 1,
                 }
@@ -556,7 +370,11 @@ def write_gltf(output: Path) -> None:
             "name": "PectoralL",
             "primitives": [
                 {
-                    "attributes": pect_l_attr,
+                    "attributes": {
+                        "POSITION": pect_l_pos,
+                        "NORMAL": pect_l_nor,
+                        "TEXCOORD_0": pect_l_uv,
+                    },
                     "indices": pect_l_idx,
                     "material": 1,
                 }
@@ -566,7 +384,11 @@ def write_gltf(output: Path) -> None:
             "name": "PectoralR",
             "primitives": [
                 {
-                    "attributes": pect_r_attr,
+                    "attributes": {
+                        "POSITION": pect_r_pos,
+                        "NORMAL": pect_r_nor,
+                        "TEXCOORD_0": pect_r_uv,
+                    },
                     "indices": pect_r_idx,
                     "material": 1,
                 }
@@ -576,29 +398,13 @@ def write_gltf(output: Path) -> None:
             "name": "Pelvic",
             "primitives": [
                 {
-                    "attributes": pelvic_attr,
+                    "attributes": {
+                        "POSITION": pelvic_pos,
+                        "NORMAL": pelvic_nor,
+                        "TEXCOORD_0": pelvic_uv,
+                    },
                     "indices": pelvic_idx,
                     "material": 1,
-                }
-            ],
-        },
-        {
-            "name": "EyeWhite",
-            "primitives": [
-                {
-                    "attributes": eye_white_attr,
-                    "indices": eye_white_idx,
-                    "material": 2,
-                }
-            ],
-        },
-        {
-            "name": "EyePupil",
-            "primitives": [
-                {
-                    "attributes": eye_pupil_attr,
-                    "indices": eye_pupil_idx,
-                    "material": 3,
                 }
             ],
         },
@@ -607,7 +413,7 @@ def write_gltf(output: Path) -> None:
     nodes = [
         {
             "name": "Goldfish",
-            "children": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            "children": [1, 2, 3, 4, 5, 6],
         },
         {
             "name": "Body",
@@ -633,28 +439,6 @@ def write_gltf(output: Path) -> None:
         {
             "name": "Pelvic",
             "mesh": 5,
-        },
-        {
-            "name": "EyeLeftWhite",
-            "mesh": 6,
-            "translation": [0.26, 0.03, 0.12],
-        },
-        {
-            "name": "EyeRightWhite",
-            "mesh": 6,
-            "translation": [0.26, 0.03, -0.12],
-        },
-        {
-            "name": "EyeLeftPupil",
-            "mesh": 7,
-            "translation": [0.29, 0.035, 0.13],
-            "scale": [0.9, 1.05, 0.9],
-        },
-        {
-            "name": "EyeRightPupil",
-            "mesh": 7,
-            "translation": [0.29, 0.035, -0.13],
-            "scale": [0.9, 1.05, 0.9],
         },
     ]
 

@@ -1,555 +1,376 @@
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js';
-import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/loaders/GLTFLoader.js';
+// static/app.js
+(() => {
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+  const threeContainer = document.getElementById('three-container');
+  const modeButtons = {
+    '2d': document.getElementById('mode-2d'),
+    '3d': document.getElementById('mode-3d')
+  };
 
-const canvas = document.getElementById('cv');
-if (!canvas) {
-  throw new Error('canvas element not found');
-}
+  let currentMode = '2d';
+  const hasThree = typeof window.THREE !== 'undefined';
+  let threeReady = false;
+  let renderer, scene, camera, fishGroup;
+  const fishMeshes = new Map();
+  const fishDepth = new Map();
 
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-renderer.setPixelRatio(window.devicePixelRatio || 1);
-renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.setClearColor(0x04111d, 1);
-
-const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x0b2233, 6, 18);
-
-const camera = new THREE.PerspectiveCamera(48, 16 / 9, 0.1, 50);
-camera.position.set(0.0, 0.75, 5.4);
-const cameraTarget = new THREE.Vector3(0, 0.3, 0);
-camera.lookAt(cameraTarget);
-
-const worldBounds = new THREE.Vector3(5.0, 2.4, 3.2);
-const halfBounds = worldBounds.clone().multiplyScalar(0.5);
-
-const header = document.querySelector('header');
-const statusBadge = document.createElement('span');
-statusBadge.style.float = 'right';
-statusBadge.style.fontSize = '12px';
-statusBadge.style.opacity = '0.7';
-statusBadge.textContent = 'loading goldfish…';
-header?.appendChild(statusBadge);
-
-function setStatus(text, tint = '#c9f') {
-  statusBadge.textContent = text;
-  statusBadge.style.color = tint;
-}
-
-function resize() {
-  const rect = canvas.parentElement?.getBoundingClientRect();
-  const headerHeight = header ? header.getBoundingClientRect().height : 0;
-  const footer = document.querySelector('footer');
-  const footerHeight = footer ? footer.getBoundingClientRect().height : 0;
-  const width = rect ? rect.width : window.innerWidth;
-  const height = Math.max(1, (rect ? rect.height : window.innerHeight) - headerHeight - footerHeight);
-  renderer.setSize(width, height, false);
-  camera.aspect = width / Math.max(1, height);
-  camera.updateProjectionMatrix();
-}
-window.addEventListener('resize', resize);
-resize();
-
-// --- Environment ------------------------------------------------------------
-
-const ambient = new THREE.HemisphereLight(0x5f9dff, 0x06121f, 0.55);
-scene.add(ambient);
-
-const keyLight = new THREE.DirectionalLight(0xfff0c8, 1.2);
-keyLight.position.set(-3.6, 5.2, 3.2);
-keyLight.castShadow = true;
-keyLight.shadow.mapSize.set(1024, 1024);
-keyLight.shadow.camera.near = 0.5;
-keyLight.shadow.camera.far = 15;
-keyLight.shadow.camera.left = -4;
-keyLight.shadow.camera.right = 4;
-keyLight.shadow.camera.top = 4;
-keyLight.shadow.camera.bottom = -3;
-scene.add(keyLight);
-
-const rimLight = new THREE.PointLight(0x2f8dff, 0.6, 0, 2);
-rimLight.position.set(3.4, 1.4, -2.8);
-scene.add(rimLight);
-
-const causticLight = new THREE.PointLight(0x4acfff, 0.4, 0, 2);
-causticLight.position.set(-0.6, -0.3, 1.6);
-scene.add(causticLight);
-
-const floor = new THREE.Mesh(
-  new THREE.PlaneGeometry(worldBounds.x, worldBounds.z, 1, 1),
-  new THREE.MeshStandardMaterial({
-    color: 0x08212c,
-    roughness: 0.95,
-    metalness: 0.0,
-    emissive: 0x041520,
-  }),
-);
-floor.receiveShadow = true;
-floor.rotation.x = -Math.PI / 2;
-floor.position.y = -halfBounds.y + 0.02;
-scene.add(floor);
-
-const backWall = new THREE.Mesh(
-  new THREE.PlaneGeometry(worldBounds.x, worldBounds.y),
-  new THREE.MeshStandardMaterial({
-    color: 0x071a27,
-    roughness: 0.8,
-    metalness: 0.0,
-    emissive: 0x031019,
-  }),
-);
-backWall.position.set(0, 0, -halfBounds.z);
-scene.add(backWall);
-
-const waterVolume = new THREE.Mesh(
-  new THREE.BoxGeometry(worldBounds.x * 0.98, worldBounds.y * 0.98, worldBounds.z * 0.98),
-  new THREE.MeshPhysicalMaterial({
-    color: 0x0d2737,
-    roughness: 0.1,
-    metalness: 0,
-    transparent: true,
-    opacity: 0.18,
-    side: THREE.BackSide,
-    transmission: 1.0,
-    thickness: 2.8,
-  }),
-);
-scene.add(waterVolume);
-
-const fogPlaneMaterial = new THREE.MeshBasicMaterial({
-  color: 0x0b2436,
-  transparent: true,
-  opacity: 0.18,
-  depthWrite: false,
-});
-for (let i = 0; i < 4; i += 1) {
-  const plane = new THREE.Mesh(new THREE.PlaneGeometry(worldBounds.x, worldBounds.y), fogPlaneMaterial.clone());
-  plane.position.z = -halfBounds.z + (i + 1) * (worldBounds.z / 5);
-  plane.material.opacity = 0.12 + i * 0.05;
-  scene.add(plane);
-}
-
-// Soft particles in the volume
-const particleGeometry = new THREE.BufferGeometry();
-const particleCount = 180;
-const positions = new Float32Array(particleCount * 3);
-const sizes = new Float32Array(particleCount);
-for (let i = 0; i < particleCount; i += 1) {
-  positions[i * 3 + 0] = (Math.random() - 0.5) * worldBounds.x * 0.9;
-  positions[i * 3 + 1] = (Math.random() - 0.3) * worldBounds.y * 0.8;
-  positions[i * 3 + 2] = (Math.random() - 0.5) * worldBounds.z * 0.9;
-  sizes[i] = 0.8 + Math.random() * 1.6;
-}
-particleGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-particleGeometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
-
-const particleMaterial = new THREE.ShaderMaterial({
-  transparent: true,
-  depthWrite: false,
-  uniforms: {
-    uTime: { value: 0 },
-    uColor: { value: new THREE.Color(0x6ecbff) },
-  },
-  vertexShader: `
-    uniform float uTime;
-    attribute float size;
-    varying float vAlpha;
-    void main() {
-      vec3 pos = position;
-      pos.y += sin((pos.x + uTime * 0.3) * 0.7) * 0.05;
-      pos.z += cos((pos.y + uTime * 0.5) * 0.6) * 0.04;
-      vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
-      vAlpha = clamp(size / 2.6, 0.2, 0.8);
-      gl_PointSize = size * 22.0 / -mvPosition.z;
-      gl_Position = projectionMatrix * mvPosition;
+  function updateMode(mode) {
+    if (mode === '3d' && !hasThree) {
+      return;
     }
-  `,
-  fragmentShader: `
-    varying float vAlpha;
-    uniform vec3 uColor;
-    void main() {
-      float r = length(gl_PointCoord - vec2(0.5));
-      float alpha = smoothstep(0.5, 0.0, r) * vAlpha;
-      gl_FragColor = vec4(uColor, alpha * 0.45);
-    }
-  `,
-});
-const particles = new THREE.Points(particleGeometry, particleMaterial);
-scene.add(particles);
-
-// --- Goldfish management ----------------------------------------------------
-
-let templateRoot = null;
-const fishActors = new Map();
-const liveStates = new Map();
-let lastLiveMessage = 0;
-
-class GoldfishActor {
-  constructor(id, template) {
-    this.id = id;
-    this.root = template.clone(true);
-    this.root.visible = false;
-    this.root.traverse((obj) => {
-      if (obj.isMesh) {
-        obj.material = obj.material.clone();
-        obj.castShadow = true;
-        obj.receiveShadow = !obj.material.transparent;
-      }
+    if (currentMode === mode) return;
+    currentMode = mode;
+    Object.entries(modeButtons).forEach(([key, btn]) => {
+      if (!btn) return;
+      btn.setAttribute('aria-pressed', key === mode ? 'true' : 'false');
     });
-    this.tail = this.root.getObjectByName('Tail');
-    this.pectoralL = this.root.getObjectByName('PectoralL');
-    this.pectoralR = this.root.getObjectByName('PectoralR');
-    this.dorsal = this.root.getObjectByName('Dorsal');
-    this.pelvic = this.root.getObjectByName('Pelvic');
-
-    const deg = THREE.MathUtils.degToRad;
-    if (this.pectoralL) {
-      this.pectoralL.rotation.set(deg(65), deg(18), deg(40));
+    if (mode === '2d') {
+      cv.style.display = 'block';
+      threeContainer.style.display = 'none';
+      threeContainer.setAttribute('aria-hidden', 'true');
+    } else {
+      cv.style.display = 'none';
+      threeContainer.style.display = 'block';
+      threeContainer.removeAttribute('aria-hidden');
+      if (!threeReady) initThree();
     }
-    if (this.pectoralR) {
-      this.pectoralR.rotation.set(deg(65), deg(-18), deg(-40));
-    }
-    if (this.pelvic) {
-      this.pelvic.rotation.set(deg(105), 0, 0);
-    }
-
-    this.position = new THREE.Vector3();
-    this.prevPosition = new THREE.Vector3();
-    this.targetPosition = new THREE.Vector3();
-    this.velocity = new THREE.Vector3();
-    this.quaternion = new THREE.Quaternion();
-    this.targetQuaternion = new THREE.Quaternion();
-    this.headingHint = new THREE.Vector3(1, 0, 0);
-    this.velocityHint = new THREE.Vector3(1, 0, 0);
-    this.depth = (Math.random() - 0.5) * worldBounds.z * 0.7;
-    this.presence = 0;
-    this.currentScale = 0.9;
-    this.targetScale = 1.0;
-    this.swimPhase = Math.random() * Math.PI * 2;
-    this.mode = 'fallback';
-    this.frameActive = false;
-    this.speedHint = 0.0;
-
-    scene.add(this.root);
+    fit();
   }
 
-  beginFrame() {
-    this.frameActive = false;
+  if (!hasThree && modeButtons['3d']) {
+    modeButtons['3d'].disabled = true;
+    modeButtons['3d'].textContent += '（未対応）';
+  }
+  if (modeButtons['2d']) {
+    modeButtons['2d'].addEventListener('click', () => updateMode('2d'));
+  }
+  if (modeButtons['3d']) {
+    modeButtons['3d'].addEventListener('click', () => updateMode('3d'));
   }
 
-  applyLiveState(state) {
-    const nx = (state.x - 0.5) * worldBounds.x * 0.8;
-    const ny = (0.5 - state.y) * worldBounds.y * 0.75;
-    const hasZ = Number.isFinite(state.z);
-    const nz = hasZ ? (0.5 - state.z) * worldBounds.z * 0.85 : this.depth;
-    if (hasZ) {
-      this.depth = nz;
+  // レイアウトに応じてキャンバスをリサイズ
+  function fit() {
+    const ratio = window.devicePixelRatio || 1;
+    const holder = cv.parentElement;
+    if (!holder) return;
+    const rect = holder.getBoundingClientRect();
+    if (currentMode === '2d') {
+      cv.width  = Math.max(1, Math.floor(rect.width * ratio));
+      cv.height = Math.max(1, Math.floor(rect.height * ratio));
     }
-    this.targetPosition.set(nx, ny, hasZ ? nz : this.depth);
-    const scaleHint = Number.isFinite(state.scale) ? state.scale : 1;
-    this.targetScale = 0.6 + scaleHint * 0.45;
-
-    if (Number.isFinite(state.speed)) {
-      this.speedHint = state.speed * worldBounds.x * 0.8;
-    }
-
-    const heading = state.heading;
-    const hasHeading = heading && Number.isFinite(heading.x) && Number.isFinite(heading.y) && Number.isFinite(heading.z);
-    if (hasHeading) {
-      this.headingHint.set(heading.x, heading.y, heading.z).normalize();
-    }
-
-    const hasVelocity = Number.isFinite(state.vx) && Number.isFinite(state.vy) && Number.isFinite(state.vz);
-    if (hasVelocity) {
-      this.velocityHint.set(state.vx, state.vy, state.vz);
-      if (!hasHeading && this.velocityHint.lengthSq() > 0) {
-        this.headingHint.copy(this.velocityHint).normalize();
+    if (threeReady && renderer) {
+      renderer.setPixelRatio(ratio);
+      renderer.setSize(rect.width, rect.height, false);
+      if (camera) {
+        const aspect = rect.width > 0 ? rect.width / Math.max(rect.height, 1) : 1;
+        camera.aspect = aspect;
+        camera.updateProjectionMatrix();
       }
     }
-
-    if (!hasHeading && !hasVelocity && Number.isFinite(state.dir)) {
-      this.headingHint.set(Math.cos(state.dir), Math.sin(state.dir) * 0.2, Math.sin(state.dir + Math.PI / 2));
-    }
-    this.mode = 'live';
-    this.frameActive = true;
   }
+  window.addEventListener('resize', fit);
+  fit();
 
-  applyFallbackState(state) {
-    this.targetPosition.copy(state.position);
-    this.targetScale = state.scale;
-    this.velocityHint.copy(state.velocity);
-    this.speedHint = state.velocity.length();
-    if (state.velocity.lengthSq() > 0) {
-      this.headingHint.copy(state.velocity).normalize();
-    }
-    this.mode = 'fallback';
-    this.frameActive = true;
-  }
+  // ドット絵金魚のロード
+  const fishImg = new Image();
+  fishImg.src = '/static/goldfish.png'; // 32x20 くらいのPNGを想定
 
-  update(dt, time) {
-    const smooth = 1 - Math.exp(-dt * 5);
-    this.position.lerp(this.targetPosition, smooth);
-    const delta = this.position.clone().sub(this.prevPosition);
-    const vel = delta.lengthSq() > 1e-8 ? delta.clone().divideScalar(Math.max(dt, 1e-3)) : new THREE.Vector3();
-    this.velocity.lerp(vel, 0.6);
-    this.prevPosition.copy(this.position);
+  // 受信状態
+  let fishState = []; // {id, x, y, dir, scale, flip}
+  let lastFrame = performance.now();
+  let fallbackTimer = null;
+  let fallbackActive = false;
+  let fallbackFish = [];
 
-    let forward = delta.clone();
-    if (forward.lengthSq() < 1e-6) {
-      forward = (this.mode === 'live' ? this.headingHint : this.velocityHint).clone();
-    }
-    if (forward.lengthSq() < 1e-6) {
-      forward.set(1, 0, 0);
-    }
-    forward.normalize();
-
-    const upCandidate = Math.abs(forward.y) > 0.85 ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(0, 1, 0);
-    const right = new THREE.Vector3().crossVectors(upCandidate, forward).normalize();
-    const up = new THREE.Vector3().crossVectors(forward, right).normalize();
-    const basis = new THREE.Matrix4().makeBasis(forward, up, right);
-    this.targetQuaternion.setFromRotationMatrix(basis);
-    const slerp = 1 - Math.exp(-dt * 6);
-    this.quaternion.slerp(this.targetQuaternion, slerp);
-    this.root.quaternion.copy(this.quaternion);
-
-    const scaleSmooth = 1 - Math.exp(-dt * 3);
-    this.currentScale = THREE.MathUtils.lerp(this.currentScale, this.targetScale, scaleSmooth);
-    const presenceTarget = this.frameActive ? 1 : 0;
-    this.presence = THREE.MathUtils.lerp(this.presence, presenceTarget, 1 - Math.exp(-dt * 5));
-
-    const finalScale = this.currentScale * this.presence;
-    this.root.scale.setScalar(finalScale);
-    this.root.visible = finalScale > 0.02;
-    this.root.position.copy(this.position);
-
-    const swimMetric = Math.max(this.velocity.length(), this.speedHint);
-    const swimSpeed = 2.2 + swimMetric * 0.9;
-    this.swimPhase += dt * swimSpeed;
-    const tailSwing = 0.35 + swimMetric * 0.18;
-    if (this.tail) {
-      this.tail.rotation.y = Math.sin(this.swimPhase) * tailSwing;
-      this.tail.position.y = Math.sin(this.swimPhase * 0.5) * 0.015;
-    }
-    if (this.pectoralL) {
-      this.pectoralL.rotation.z = 0.9 + Math.sin(this.swimPhase + 0.5) * 0.25;
-      this.pectoralL.rotation.y = 0.3 + Math.sin(time * 1.2 + this.id) * 0.08;
-    }
-    if (this.pectoralR) {
-      this.pectoralR.rotation.z = -0.9 + Math.sin(this.swimPhase + 0.8) * -0.25;
-      this.pectoralR.rotation.y = -0.3 + Math.sin(time * 1.1 + this.id * 0.7) * 0.08;
-    }
-    if (this.pelvic) {
-      this.pelvic.rotation.x = THREE.MathUtils.degToRad(105) + Math.sin(this.swimPhase * 0.8) * 0.12;
-    }
-    if (this.dorsal) {
-      this.dorsal.rotation.x = Math.sin(this.swimPhase * 0.6) * 0.05;
-    }
-  }
-}
-
-function ensureActor(id) {
-  if (!templateRoot) {
-    return null;
-  }
-  let actor = fishActors.get(id);
-  if (!actor) {
-    actor = new GoldfishActor(id, templateRoot);
-    const colorShift = new THREE.Color().setHSL(0.04 + Math.random() * 0.04, 0.7 + Math.random() * 0.1, 0.55 + Math.random() * 0.08);
-    actor.root.traverse((obj) => {
-      if (obj.isMesh && obj.material) {
-        obj.material.color?.lerp(colorShift, 0.6);
-        if (obj.material.emissive) {
-          obj.material.emissive.lerp(colorShift, 0.2);
-        }
-        if (obj.material.transparent) {
-          obj.material.opacity = obj.material.opacity ?? 0.8;
-        }
-      }
+  // 簡易泡エフェクト
+  const bubbles = [];
+  function spawnBubble() {
+    bubbles.push({
+      x: Math.random() * cv.width,
+      y: cv.height + Math.random() * 50,
+      r: 2 + Math.random() * 3,
+      vy: - (0.3 + Math.random() * 0.7) * (window.devicePixelRatio || 1),
+      drift: (Math.random() - 0.5) * 0.3
     });
     fishActors.set(id, actor);
   }
-  return actor;
-}
+  setInterval(() => { for (let i = 0; i < 2; i++) spawnBubble(); }, 300);
 
-// --- Fallback simulation ----------------------------------------------------
+  function createFallbackFish(count = 10) {
+    const fish = [];
+    for (let i = 0; i < count; i++) {
+      fish.push({
+        id: `fallback-${i}`,
+        x: Math.random(),
+        y: Math.random(),
+        dir: Math.random() * Math.PI * 2,
+        scale: 0.8 + Math.random() * 0.4,
+        flip: 1,
+        speed: 0.03 + Math.random() * 0.07,
+      });
+    }
+    return fish;
+  }
 
-function createFallbackSchool(count) {
-  const school = [];
-  for (let i = 0; i < count; i += 1) {
-    const pos = new THREE.Vector3(
-      (Math.random() - 0.5) * worldBounds.x * 0.7,
-      (Math.random() - 0.2) * worldBounds.y * 0.6,
-      (Math.random() - 0.5) * worldBounds.z * 0.7,
-    );
-    const dir = new THREE.Vector3(Math.random() - 0.5, (Math.random() - 0.5) * 0.4, Math.random() - 0.5).normalize();
-    const speed = 0.45 + Math.random() * 0.45;
-    const vel = dir.multiplyScalar(speed);
-    school.push({
-      id: `fallback-${i}`,
-      position: pos,
-      velocity: vel,
-      speed,
-      scale: 0.7 + Math.random() * 0.4,
+  function activateFallback() {
+    if (fallbackActive) return;
+    fallbackActive = true;
+    fallbackFish = createFallbackFish();
+    fishState = fallbackFish;
+  }
+
+  function stopFallback() {
+    if (!fallbackActive) return;
+    fallbackActive = false;
+    fallbackFish = [];
+  }
+
+  function updateFallbackFish(dt) {
+    if (!fallbackActive) return;
+    fallbackFish.forEach(f => {
+      f.dir += (Math.random() - 0.5) * 0.8 * dt;
+      const vx = Math.cos(f.dir) * f.speed;
+      const vy = Math.sin(f.dir) * f.speed;
+      f.x += vx * dt;
+      f.y += vy * dt;
+      let bounced = false;
+      if (f.x < 0.02) { f.x = 0.02; f.dir = Math.PI - f.dir; bounced = true; }
+      else if (f.x > 0.98) { f.x = 0.98; f.dir = Math.PI - f.dir; bounced = true; }
+      if (f.y < 0.05) { f.y = 0.05; f.dir = -f.dir; bounced = true; }
+      else if (f.y > 0.95) { f.y = 0.95; f.dir = -f.dir; bounced = true; }
+      if (bounced) {
+        f.speed = Math.max(0.02, f.speed * 0.9);
+      } else if (Math.random() < 0.02) {
+        f.speed = Math.min(0.12, f.speed * 1.05);
+      }
+      f.flip = vx < 0 ? -1 : 1;
     });
   }
-  return school;
-}
 
-const fallbackSchool = createFallbackSchool(12);
-
-function updateFallbackSchool(dt) {
-  const center = new THREE.Vector3();
-  fallbackSchool.forEach((fish) => center.add(fish.position));
-  center.multiplyScalar(1 / fallbackSchool.length);
-
-  fallbackSchool.forEach((fish) => {
-    const jitter = new THREE.Vector3(Math.random() - 0.5, (Math.random() - 0.5) * 0.6, Math.random() - 0.5).multiplyScalar(0.25 * dt);
-    fish.velocity.add(jitter);
-
-    const toCenter = center.clone().sub(fish.position).multiplyScalar(0.15 * dt);
-    fish.velocity.add(toCenter);
-
-    fish.velocity.clampLength(fish.speed * 0.6, fish.speed * 1.4);
-    fish.position.addScaledVector(fish.velocity, dt);
-
-    if (fish.position.x < -halfBounds.x * 0.9 || fish.position.x > halfBounds.x * 0.9) {
-      fish.velocity.x *= -1;
-      fish.position.x = THREE.MathUtils.clamp(fish.position.x, -halfBounds.x * 0.9, halfBounds.x * 0.9);
+  function scheduleFallback(delay = 3000) {
+    if (fallbackTimer !== null) {
+      window.clearTimeout(fallbackTimer);
     }
-    if (fish.position.y < -halfBounds.y * 0.85 || fish.position.y > halfBounds.y * 0.85) {
-      fish.velocity.y *= -0.8;
-      fish.position.y = THREE.MathUtils.clamp(fish.position.y, -halfBounds.y * 0.85, halfBounds.y * 0.85);
-    }
-    if (fish.position.z < -halfBounds.z * 0.9 || fish.position.z > halfBounds.z * 0.9) {
-      fish.velocity.z *= -1;
-      fish.position.z = THREE.MathUtils.clamp(fish.position.z, -halfBounds.z * 0.9, halfBounds.z * 0.9);
-    }
-  });
-}
-
-// --- WebSocket --------------------------------------------------------------
-
-let socket = null;
-let reconnectTimer = null;
-
-function connectWebSocket() {
-  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  const url = `${proto}://${window.location.host}/ws`;
-  try {
-    socket = new WebSocket(url);
-  } catch (err) {
-    scheduleReconnect();
-    return;
+    fallbackTimer = window.setTimeout(() => {
+      fallbackTimer = null;
+      activateFallback();
+    }, delay);
   }
 
-  socket.addEventListener('open', () => {
-    setStatus('online', '#8ff');
-  });
+  function clearFallbackTimer() {
+    if (fallbackTimer === null) return;
+    window.clearTimeout(fallbackTimer);
+    fallbackTimer = null;
+  }
 
-  socket.addEventListener('close', () => {
-    setStatus('offline', '#fbb');
-    scheduleReconnect();
-  });
+  function initThree() {
+    if (!hasThree || threeReady) return;
+    const { THREE } = window;
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setClearColor(0x071726, 1);
+    threeContainer.appendChild(renderer.domElement);
 
-  socket.addEventListener('error', () => {
-    socket?.close();
-  });
+    scene = new THREE.Scene();
 
-  socket.addEventListener('message', (event) => {
-    try {
-      const payload = JSON.parse(event.data);
-      if (payload?.type === 'state' && Array.isArray(payload.fish)) {
-        lastLiveMessage = performance.now();
-        liveStates.clear();
-        payload.fish.forEach((fish) => {
-          if (typeof fish.id !== 'undefined') {
-            liveStates.set(String(fish.id), fish);
-          }
+    const ambient = new THREE.AmbientLight(0xffffff, 0.8);
+    scene.add(ambient);
+    const keyLight = new THREE.DirectionalLight(0xffffff, 0.7);
+    keyLight.position.set(0.8, 1.2, 0.9);
+    scene.add(keyLight);
+    const fillLight = new THREE.DirectionalLight(0x88bfff, 0.4);
+    fillLight.position.set(-0.9, -0.4, -0.8);
+    scene.add(fillLight);
+
+    const rect = threeContainer.getBoundingClientRect();
+    const aspect = rect.width > 0 ? rect.width / Math.max(rect.height, 1) : 1;
+    camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 10);
+    camera.position.set(0, 0.3, 1.5);
+    camera.lookAt(0, 0.1, 0);
+
+    fishGroup = new THREE.Group();
+    scene.add(fishGroup);
+
+    threeReady = true;
+    fit();
+  }
+
+  function syncThreeFish() {
+    if (!threeReady) return;
+    const { THREE } = window;
+    const seen = new Set();
+    fishState.forEach(f => {
+      seen.add(f.id);
+      let mesh = fishMeshes.get(f.id);
+      if (!mesh) {
+        const hue = 0.02 + Math.random() * 0.06;
+        const material = new THREE.MeshStandardMaterial({
+          color: new THREE.Color().setHSL(hue, 0.8, 0.6),
+          roughness: 0.45,
+          metalness: 0.1
         });
+        const geometry = new THREE.CapsuleGeometry(0.05, 0.12, 6, 12);
+        mesh = new THREE.Mesh(geometry, material);
+        mesh.castShadow = false;
+        mesh.receiveShadow = false;
+        mesh.userData.phase = Math.random() * Math.PI * 2;
+        fishGroup.add(mesh);
+        fishMeshes.set(f.id, mesh);
+        if (!fishDepth.has(f.id)) {
+          fishDepth.set(f.id, (Math.random() - 0.5) * 0.7);
+        }
       }
-    } catch (err) {
-      console.warn('failed to parse message', err);
-    }
-  });
-}
+      const depth = fishDepth.get(f.id) ?? 0;
+      const worldX = (f.x - 0.5) * 1.4;
+      const worldY = (0.5 - f.y) * 0.8;
+      mesh.userData.targetPos = new THREE.Vector3(worldX, worldY, depth);
+      mesh.userData.heading = -f.dir;
+      const baseScale = 0.55 * f.scale;
+      mesh.userData.scale = baseScale;
+      mesh.userData.flip = f.flip;
+    });
 
-function scheduleReconnect() {
-  if (reconnectTimer) {
-    return;
+    fishMeshes.forEach((mesh, id) => {
+      if (!seen.has(id)) {
+        fishGroup.remove(mesh);
+        fishMeshes.delete(id);
+      }
+    });
   }
-  reconnectTimer = window.setTimeout(() => {
-    reconnectTimer = null;
-    connectWebSocket();
-  }, 3000);
-}
 
-connectWebSocket();
-
-// --- Loading model ----------------------------------------------------------
-
-const loader = new GLTFLoader();
-loader.load(
-  '/static/models/goldfish.gltf',
-  (gltf) => {
-    templateRoot = gltf.scene.getObjectByName('Goldfish') || gltf.scene.children[0] || gltf.scene;
-    setStatus('waiting for data…', '#aff');
-  },
-  undefined,
-  (error) => {
-    console.error('Failed to load goldfish glTF', error);
-    setStatus('model load failed', '#faa');
-  },
-);
-
-// --- Animation loop --------------------------------------------------------
-
-const clock = new THREE.Clock();
-
-function animate() {
-  requestAnimationFrame(animate);
-  const dt = Math.min(0.05, clock.getDelta());
-  const now = performance.now();
-  particles.material.uniforms.uTime.value += dt;
-
-  if (!templateRoot) {
+  function renderThree(ts, dt) {
+    if (!threeReady || !renderer || !scene || !camera) return;
+    const { THREE } = window;
+    const t = ts / 1000;
+    const lerpFactor = Math.min(1, dt * 6);
+    fishMeshes.forEach(mesh => {
+      const target = mesh.userData.targetPos;
+      if (target) {
+        mesh.position.lerp(target, lerpFactor);
+      }
+      const baseScale = mesh.userData.scale || 0.5;
+      const sY = THREE.MathUtils.lerp(mesh.scale.y, baseScale, lerpFactor);
+      const sX = sY * 0.65;
+      const sZ = sY * 0.9;
+      mesh.scale.set(sX, sY, sZ);
+      const heading = mesh.userData.heading || 0;
+      const swim = Math.sin(t * 3 + mesh.userData.phase) * 0.18;
+      mesh.rotation.set(
+        Math.sin(t * 2.2 + mesh.userData.phase) * 0.08,
+        heading + swim,
+        Math.sin(t * 1.7 + mesh.userData.phase) * 0.05
+      );
+    });
     renderer.render(scene, camera);
-    return;
   }
 
-  fishActors.forEach((actor) => actor.beginFrame());
+  // 描画ループ（サーバー更新は20Hz、描画はブラウザvsync）
+  function render(ts) {
+    const w = cv.width;
+    const h = cv.height;
+    const ratio = window.devicePixelRatio || 1;
+    const dt = Math.min(0.05, Math.max(0.001, (ts - lastFrame) / 1000));
+    lastFrame = ts;
 
-  const useFallback = now - lastLiveMessage > 2500 || liveStates.size === 0;
-  if (useFallback) {
-    updateFallbackSchool(dt);
-    fallbackSchool.forEach((state) => {
-      const actor = ensureActor(state.id);
-      if (actor) {
-        actor.applyFallbackState(state);
-      }
-    });
-    const offline = liveStates.size === 0;
-    setStatus(offline ? 'offline simulation' : 'buffering', offline ? '#ffd18f' : '#ffe8a3');
-  } else {
-    liveStates.forEach((fish, key) => {
-      const actor = ensureActor(key);
-      if (actor) {
-        actor.applyLiveState(fish);
-      }
-    });
-    setStatus('streaming', '#8ff0ff');
-  }
-
-  fishActors.forEach((actor) => actor.update(dt, now * 0.001));
-
-  fishActors.forEach((actor, key) => {
-    if (!actor.frameActive && actor.presence < 0.01) {
-      scene.remove(actor.root);
-      fishActors.delete(key);
+    if (fallbackActive) {
+      updateFallbackFish(dt);
     }
-  });
 
-  renderer.render(scene, camera);
-}
+    updateBubbles(dt);
+    if (currentMode === '2d') {
+      render2D(ts);
+    } else {
+      renderThree(ts, dt);
+    }
+    requestAnimationFrame(render);
+  }
+  requestAnimationFrame(render);
 
-animate();
+  function render2D(ts) {
+    const w = cv.width, h = cv.height;
+    const grad = ctx.createLinearGradient(0, 0, 0, h);
+    grad.addColorStop(0, '#0b3450');
+    grad.addColorStop(0.7, '#0b2640');
+    grad.addColorStop(1, '#0b1e2b');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+
+    ctx.globalAlpha = 0.07;
+    ctx.beginPath();
+    const amp = 8, k = 2 * Math.PI / 180;
+    for (let x=0; x<=w; x+=6) {
+      const y = h*0.2 + Math.sin((x + ts*0.05) * k) * amp;
+      if (x === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = '#7fd';
+    ctx.stroke();
+    ctx.globalAlpha = 1.0;
+
+    drawBubbles();
+    drawFish2D();
+  }
+
+  function updateBubbles(dt) {
+    for (let i=bubbles.length-1; i>=0; i--) {
+      const b = bubbles[i];
+      b.y += b.vy;
+      b.x += b.drift;
+      if (b.y < -10) bubbles.splice(i,1);
+    }
+  }
+
+  function drawBubbles() {
+    for (let i=0; i<bubbles.length; i++) {
+      const b = bubbles[i];
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(200,240,255,0.6)';
+      ctx.fill();
+    }
+  }
+
+  function drawFish2D() {
+    if (!(fishImg.complete && fishImg.naturalWidth > 0)) return;
+    const w = cv.width, h = cv.height;
+    const ratio = window.devicePixelRatio || 1;
+    fishState.forEach(f => {
+      const px = f.x * w;
+      const py = f.y * h;
+      const baseW = 32 * f.scale * ratio;
+      const baseH = 20 * f.scale * ratio;
+
+      ctx.save();
+      ctx.translate(px, py);
+      const angle = Math.atan2(Math.sin(f.dir), Math.cos(f.dir)) * 0.15;
+      ctx.rotate(angle);
+      ctx.scale(f.flip, 1);
+      ctx.drawImage(fishImg, -baseW/2, -baseH/2, baseW, baseH);
+      ctx.restore();
+    });
+  }
+
+  // WebSocket接続
+  const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${wsProto}://${location.host}/ws`);
+  scheduleFallback();
+  ws.onmessage = (ev) => {
+    try {
+      const msg = JSON.parse(ev.data);
+      if (msg.type === 'state') {
+        fishState = msg.fish || [];
+        syncThreeFish();
+      }
+    } catch (e) {}
+  };
+  ws.onopen = () => {
+    // 将来：設定変更など送る場合に使用
+    ws.send(JSON.stringify({type:'hello'}));
+  };
+  ws.onerror = () => {
+    activateFallback();
+  };
+  ws.onclose = () => {
+    activateFallback();
+  };
+})();
