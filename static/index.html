@@ -7,22 +7,38 @@
   <style>
     html, body { margin:0; height:100%; background:#0b1e2b; color:#eef; font-family:system-ui, sans-serif; }
     #wrap { display:flex; flex-direction:column; height:100%; }
-    header { padding:8px 12px; background:rgba(255,255,255,0.04); backdrop-filter: blur(2px); }
-    canvas { display:block; width:100%; height:100%; }
+    header { padding:8px 12px; background:rgba(255,255,255,0.04); backdrop-filter: blur(2px); display:flex; align-items:center; gap:12px; }
+    header .title { flex:1; font-weight:bold; }
+    header .modes { display:flex; gap:6px; }
+    header button { border:1px solid rgba(255,255,255,0.25); background:rgba(255,255,255,0.06); color:#eef; padding:4px 10px; border-radius:4px; font-size:13px; cursor:pointer; }
+    header button[aria-pressed="true"] { background:rgba(117,184,255,0.2); border-color:rgba(117,184,255,0.6); }
+    header button:focus-visible { outline:2px solid rgba(160,210,255,0.8); outline-offset:2px; }
+    #view-area { flex:1; position:relative; overflow:hidden; }
+    #view-area canvas,
+    #three-container { display:block; width:100%; height:100%; }
+    #three-container { display:none; }
     footer { padding:6px 12px; background:rgba(255,255,255,0.04); font-size:12px; }
   </style>
 </head>
 <body>
   <div id="wrap">
     <header>
-      <strong>Apuarium™</strong> – 金魚が泳ぐリアルタイム水槽（WebSocket）
+      <span class="title">Apuarium™</span>
+      <span>金魚が泳ぐリアルタイム水槽（WebSocket）</span>
+      <span class="modes" role="group" aria-label="描画モード">
+        <button id="mode-2d" type="button" aria-pressed="true">2D 表示</button>
+        <button id="mode-3d" type="button" aria-pressed="false">3D ベータ</button>
+      </span>
     </header>
-    <canvas id="cv"></canvas>
+    <div id="view-area">
+      <canvas id="cv"></canvas>
+      <div id="three-container" aria-hidden="true"></div>
+    </div>
     <footer>
       © 2025 Apuarium™ （ドット絵・簡易エフェクト内製）
     </footer>
   </div>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.161.0/build/three.min.js" integrity="sha384-lkQp6ZfP3gOQ9Ejf25JRTyBx4z3Btuv8bzzWpX3NdUCPW879uAEaGpS+UZfziwg6" crossorigin="anonymous"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>
