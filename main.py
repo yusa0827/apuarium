@@ -10,88 +10,117 @@ from fastapi.responses import HTMLResponse
 
 app = FastAPI()
 
-# 静的ファイル（index.html / app.js / goldfish.png）を配信
+# 静的ファイル（index.html / app.js など）を配信
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # ---- シミュレーション設定 ----
-FISH_COUNT = 20
+FISH_COUNT = 18
 TICK_HZ = 20          # 送信レート（20Hz = 50ms)
 SPEED_MIN = 0.05      # 規格化座標(0..1) / sec
-SPEED_MAX = 0.15
-TURN_NOISE = 0.7      # 向きのランダムゆらぎ（大きいほど曲がる）
-WALL_BOUNCE = 0.9     # 壁反射の強さ(0..1)
+SPEED_MAX = 0.16
+TURN_NOISE = 1.2      # 向きのランダムゆらぎ（大きいほど曲がる）
+WALL_BOUNCE = 0.85    # 壁反射の強さ(0..1)
 
 # 規格化空間(0..1)でシミュレーション、クライアント側でCanvasサイズに合わせて描画
+def _random_direction() -> List[float]:
+    azimuth = random.uniform(0, 2 * math.pi)
+    elevation = random.uniform(-math.pi / 6, math.pi / 6)
+    cos_elev = math.cos(elevation)
+    return [
+        cos_elev * math.cos(azimuth),
+        math.sin(elevation),
+        cos_elev * math.sin(azimuth),
+    ]
+
+
+def _normalize(vec: List[float]) -> List[float]:
+    length = math.sqrt(vec[0] ** 2 + vec[1] ** 2 + vec[2] ** 2)
+    if length < 1e-6:
+        return [1.0, 0.0, 0.0]
+    return [vec[0] / length, vec[1] / length, vec[2] / length]
+
+
 class Fish:
     def __init__(self, idx: int):
         self.id = idx
-        self.x = random.random()
-        self.y = random.random()
-        self.dir = random.uniform(0, 2 * math.pi)  # 角度ラジアン
+        self.pos = [random.random(), random.random(), random.random()]
+        self.dir = _normalize(_random_direction())
         self.speed = random.uniform(SPEED_MIN, SPEED_MAX)
-        self.scale = random.uniform(0.8, 1.2)     # 見た目スケール（描画ヒント）
-        self.flip = 1                              # 左右反転ヒント
+        self.scale = random.uniform(0.75, 1.25)
+        self.flip = 1
+        self.velocity = [self.dir[i] * self.speed for i in range(3)]
+
+    def _bounce_axis(self, axis: int, limit_low: float, limit_high: float) -> None:
+        if self.pos[axis] < limit_low:
+            self.pos[axis] = limit_low
+            self.dir[axis] = abs(self.dir[axis])
+            self.velocity[axis] = abs(self.velocity[axis])
+            self.speed = max(SPEED_MIN, self.speed * WALL_BOUNCE)
+        elif self.pos[axis] > limit_high:
+            self.pos[axis] = limit_high
+            self.dir[axis] = -abs(self.dir[axis])
+            self.velocity[axis] = -abs(self.velocity[axis])
+            self.speed = max(SPEED_MIN, self.speed * WALL_BOUNCE)
 
     def step(self, dt: float):
-        # 少しずつ向きをランダムに変更（ゆらぎ）
-        self.dir += random.uniform(-TURN_NOISE, TURN_NOISE) * dt
+        # ランダムな揺らぎで方向ベクトルを変化させる
+        jitter = [
+            random.uniform(-TURN_NOISE, TURN_NOISE) * dt,
+            random.uniform(-TURN_NOISE, TURN_NOISE) * dt * 0.6,
+            random.uniform(-TURN_NOISE, TURN_NOISE) * dt,
+        ]
+        self.dir = _normalize([
+            self.dir[0] + jitter[0],
+            self.dir[1] + jitter[1],
+            self.dir[2] + jitter[2],
+        ])
 
-        # 角度を正規化（-π ~ π）
-        self.dir = math.atan2(math.sin(self.dir), math.cos(self.dir))
+        # ゆるやかな中心回帰で群れのまとまりを保つ
+        center_pull = [(0.5 - self.pos[i]) * 0.15 * dt for i in range(3)]
+        self.dir = _normalize([
+            self.dir[0] + center_pull[0],
+            self.dir[1] + center_pull[1],
+            self.dir[2] + center_pull[2],
+        ])
 
-        # 速度ベクトル
-        vx = math.cos(self.dir) * self.speed
-        vy = math.sin(self.dir) * self.speed
+        # 速度ベクトルを更新
+        self.velocity = [self.dir[i] * self.speed for i in range(3)]
 
-        nx = self.x + vx * dt
-        ny = self.y + vy * dt
+        # 位置を更新
+        for i in range(3):
+            self.pos[i] += self.velocity[i] * dt
 
-        bounced = False
-        new_dir = self.dir
+        # 境界反射（わずかなマージンを取る）
+        self._bounce_axis(0, 0.05, 0.95)
+        self._bounce_axis(1, 0.05, 0.95)
+        self._bounce_axis(2, 0.08, 0.92)
+        self.dir = _normalize(self.dir)
+        self.velocity = [self.dir[i] * self.speed for i in range(3)]
 
-        # 壁で反射（0..1内に留める）
-        # コーナー反射のバグ修正：角度変更を一時変数で管理
-        if nx < 0.02:
-            nx = 0.02
-            new_dir = math.pi - new_dir
-            bounced = True
-        elif nx > 0.98:
-            nx = 0.98
-            new_dir = math.pi - new_dir
-            bounced = True
+        # 速度の自然な変化
+        if random.random() < 0.05:
+            self.speed = min(SPEED_MAX, self.speed * 1.05)
+        elif random.random() < 0.05:
+            self.speed = max(SPEED_MIN, self.speed * 0.97)
 
-        if ny < 0.05:
-            ny = 0.05
-            new_dir = -new_dir
-            bounced = True
-        elif ny > 0.95:
-            ny = 0.95
-            new_dir = -new_dir
-            bounced = True
-
-        # 反射時の処理
-        if bounced:
-            self.dir = new_dir
-            # 反射時に少し減衰
-            self.speed = max(SPEED_MIN, self.speed * (0.9 + 0.1 * WALL_BOUNCE))
-        else:
-            # 通常時にランダムで微加速（速度減衰のみの問題を改善）
-            if random.random() < 0.02:  # 2%の確率で加速
-                self.speed = min(SPEED_MAX, self.speed * 1.05)
-
-        # 左右の向きヒント（x速度の符号で決める）
-        self.flip = -1 if vx < 0 else 1
-
-        self.x, self.y = nx, ny
+        # 左右反転ヒント
+        self.flip = -1 if self.velocity[0] < 0 else 1
 
     def to_dict(self) -> Dict[str, Any]:
+        heading = _normalize(self.velocity)
         return {
             "id": self.id,
-            "x": self.x,
-            "y": self.y,
-            "dir": self.dir,
+            "x": self.pos[0],
+            "y": self.pos[1],
+            "z": self.pos[2],
+            "dir": math.atan2(self.velocity[1], self.velocity[0]),
             "scale": self.scale,
             "flip": self.flip,
+            "vx": self.velocity[0],
+            "vy": self.velocity[1],
+            "vz": self.velocity[2],
+            "speed": self.speed,
+            "heading": {"x": heading[0], "y": heading[1], "z": heading[2]},
         }
 
 class Tank:
