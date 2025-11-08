@@ -1,9 +1,10 @@
 """Procedural goldfish mesh generator that exports a glTF asset.
 
-The script creates a lightweight, rig-friendly goldfish model composed of a body,
-fan tail, dorsal fin, pectoral fins, and pelvic fin. The geometry is analytic and
-kept small enough to ship with the repository, while still providing enough detail
-for smooth shading and subtle animation in the WebGL viewer.
+The generator sculpts a stylised, super-deformed ranchu-inspired goldfish with a
+pudgy head, flowing double tail, and translucent fins. Everything is produced
+mathematically so no bitmap textures are required. The resulting mesh is still
+compact enough to ship with the repository while containing enough curvature for
+Three.js to light it believably.
 
 Run directly to overwrite ``static/models/goldfish.gltf``.
 """
@@ -43,15 +44,16 @@ def smoothstep(edge0: float, edge1: float, x: float) -> float:
 
 
 def profile_radius(s: float) -> float:
-    head = math.exp(-((s - 0.1) / 0.25) ** 2) * 0.06
-    mid = math.exp(-((s - 0.45) / 0.32) ** 2) * 0.18
-    tail = math.exp(-((s - 0.85) / 0.18) ** 2) * 0.06
-    return head + mid + tail + 0.02
+    head = math.exp(-((s - 0.08) / 0.18) ** 2) * 0.1
+    belly = math.exp(-((s - 0.42) / 0.28) ** 2) * 0.22
+    peduncle = math.exp(-((s - 0.72) / 0.2) ** 2) * 0.1
+    tail_root = math.exp(-((s - 0.9) / 0.12) ** 2) * 0.05
+    return 0.04 + head + belly + peduncle + tail_root
 
 
 def build_body() -> AttributeBundle:
-    segments_len = 40
-    segments_rad = 32
+    segments_len = 48
+    segments_rad = 36
     positions: List[float] = []
     normals: List[float] = []
     uvs: List[float] = []
@@ -90,28 +92,36 @@ def build_body() -> AttributeBundle:
             normals.extend((nx / length_n, ny / length_n, nz / length_n))
             uvs.extend((s, t))
 
-            # Vertex color palette blending for a cute look
+            # Vertex color palette blending for an even cuter look
             norm_y = clamp((y / (r + 1e-6) + 1.0) * 0.5, 0.0, 1.0)
-            length_mix = smoothstep(0.15, 0.95, s)
-            cheek = math.exp(-((s - 0.82) / 0.12) ** 2) * 0.55
-            sparkle = clamp(0.45 + 0.55 * max(0.0, nz / (abs(nz) + abs(nx) + 1e-6)), 0.0, 1.0)
+            norm_z = clamp((z / (r + 1e-6) + 1.0) * 0.5, 0.0, 1.0)
+            length_mix = smoothstep(0.12, 0.82, s)
+            cheek = math.exp(-((s - 0.82) / 0.11) ** 2) * 0.65
+            gill = math.exp(-((s - 0.27) / 0.06) ** 2) * 0.4
+            sparkle = clamp(0.4 + 0.6 * max(0.0, nz), 0.0, 1.0)
 
-            belly_color = (1.0, 0.96, 0.9)
-            mid_color = (1.0, 0.66, 0.36)
-            top_color = (1.0, 0.5, 0.25)
-            cheek_color = (1.0, 0.44, 0.32)
+            belly_color = (1.0, 0.92, 0.83)
+            mid_color = (1.0, 0.63, 0.38)
+            top_color = (1.0, 0.46, 0.24)
+            cheek_color = (1.0, 0.54, 0.5)
+            gill_color = (1.0, 0.5, 0.4)
 
-            base = tuple(
+            top_mix = tuple(
                 belly_color[i] * (1.0 - norm_y) + top_color[i] * norm_y for i in range(3)
             )
-            blended = tuple(
-                base[i] * (1.0 - 0.4 * length_mix) + mid_color[i] * (0.4 * length_mix)
+            warm = tuple(
+                top_mix[i] * (1.0 - 0.45 * length_mix) + mid_color[i] * (0.45 * length_mix)
                 for i in range(3)
             )
             cheek_mix = tuple(
-                blended[i] * (1.0 - cheek) + cheek_color[i] * cheek for i in range(3)
+                warm[i] * (1.0 - cheek) + cheek_color[i] * cheek for i in range(3)
             )
-            highlight = tuple(min(1.0, cheek_mix[i] + 0.12 * sparkle) for i in range(3))
+            gilled = tuple(
+                cheek_mix[i] * (1.0 - gill) + gill_color[i] * gill for i in range(3)
+            )
+            highlight = tuple(
+                min(1.0, gilled[i] + 0.09 * sparkle + 0.04 * (1.0 - norm_z)) for i in range(3)
+            )
             colors.extend((*highlight, 1.0))
 
     indices: List[int] = []
@@ -129,15 +139,28 @@ def build_body() -> AttributeBundle:
 
 
 def tail_point(u: float, v: float) -> Vec3:
-    span = 0.5
-    length = 0.65
+    length = 0.68
     x = -0.55 - length * u
-    flare = (1 - u) ** 0.4
-    y = (v - 0.5) * span * (0.6 + 0.8 * (1 - flare))
-    z = (v - 0.5) * span * 1.4 * flare
-    sweep = math.sin(u * math.pi * 0.5) * 0.18
-    z += sweep * (1 - abs(v - 0.5) * 1.8)
-    return (x, y * 0.6, z)
+    centre = v - 0.5
+    sign = 1.0 if centre >= 0 else -1.0
+    spread = 0.55 + 0.35 * (1.0 - u)
+    lobe = (abs(centre) ** 0.55) * spread
+    pinch = smoothstep(0.0, 0.45, abs(centre))
+    ribbon = 0.12 * (1.0 - u) * (1.0 - pinch)
+
+    y = sign * lobe * (0.58 + 0.28 * (1.0 - u)) + ribbon
+    z = sign * lobe * (0.96 + 0.32 * (1.0 - u))
+
+    sweep = math.sin(u * math.pi * 0.6) * 0.22
+    flutter = math.sin((v - 0.5) * math.pi * 2.6) * 0.05 * (1.0 - u)
+    z += sweep * (1.0 - abs(centre) * 1.6) + flutter
+    y += math.cos(u * math.pi * 1.1) * 0.03 * sign * (1.0 - abs(centre) * 1.4)
+
+    notch = (1.0 - smoothstep(0.1, 0.32, abs(centre)))
+    y += notch * 0.08 * (1.0 - u)
+    z -= sign * notch * 0.03 * (1.0 - u)
+
+    return (x, y * 0.58, z)
 
 
 def build_grid(
@@ -219,14 +242,20 @@ def mirror_normals(data: Sequence[float], axis: str = "z") -> List[float]:
 
 def build_tail() -> AttributeBundle:
     def tail_color(u: float, v: float, pos: Vec3, normal: Vec3) -> Tuple[float, float, float, float]:
-        tip = smoothstep(0.0, 1.0, u)
-        edge = smoothstep(0.0, 1.0, abs(v - 0.5) * 2.0)
-        base = (1.0, 0.72, 0.52)
-        tip_tint = (1.0, 0.46, 0.32)
-        sparkle = clamp(0.6 + 0.4 * max(0.0, normal[2]), 0.0, 1.0)
+        tip = smoothstep(0.2, 1.0, u)
+        centre = abs(v - 0.5) * 2.0
+        lace = math.cos((1.0 - u) * 2.8 + centre * 3.2) * 0.5 + 0.5
+        base = (1.0, 0.76, 0.56)
+        tip_tint = (1.0, 0.5, 0.38)
+        rim = (1.0, 0.6, 0.48)
         mix = tuple(base[i] * (1.0 - tip) + tip_tint[i] * tip for i in range(3))
-        color = tuple(min(1.0, mix[i] + 0.08 * sparkle) for i in range(3))
-        alpha = clamp(0.82 - 0.6 * tip + 0.1 * (1.0 - edge), 0.25, 0.85)
+        color = tuple(
+            min(1.0, mix[i] * (0.92 + 0.08 * lace) + rim[i] * (0.12 * (1.0 - centre)))
+            for i in range(3)
+        )
+        alpha = clamp(0.82 - 0.55 * tip + 0.18 * (1.0 - centre), 0.28, 0.88)
+        shimmer = clamp(0.55 + 0.45 * max(0.0, normal[2]), 0.0, 1.0)
+        color = tuple(min(1.0, c + 0.05 * shimmer) for c in color)
         return (*color, alpha)
 
     return build_grid(20, 12, tail_point, tail_color)
@@ -234,20 +263,23 @@ def build_tail() -> AttributeBundle:
 
 def build_dorsal() -> AttributeBundle:
     def dorsal_func(u: float, v: float) -> Vec3:
-        span = 0.26
-        height = 0.24
-        x = lerp(-0.18, 0.24, u)
-        y = 0.12 + (1 - (u - 0.1) ** 2 * 1.8) * height * (1 - abs(v - 0.5) * 0.4)
-        z = (v - 0.5) * span * (0.5 + (1 - u) * 0.3)
+        span = 0.32
+        height = 0.26
+        x = lerp(-0.22, 0.28, u)
+        crown = math.sin((u + 0.2) * math.pi * 0.7) ** 1.6
+        y = 0.14 + crown * height * (1 - abs(v - 0.5) * 0.5)
+        z = (v - 0.5) * span * (0.45 + 0.4 * (1 - u))
+        z += math.sin((v - 0.5) * math.pi * 2.0) * 0.05 * (1 - u)
         return (x, y, z)
 
     def dorsal_color(u: float, v: float, pos: Vec3, normal: Vec3) -> Tuple[float, float, float, float]:
-        tip = smoothstep(0.1, 0.9, u)
+        tip = smoothstep(0.15, 1.0, u)
         edge = abs(v - 0.5) * 2.0
-        base = (1.0, 0.68, 0.48)
-        tip_tint = (1.0, 0.52, 0.36)
+        base = (1.0, 0.74, 0.54)
+        tip_tint = (1.0, 0.56, 0.4)
         color = tuple(base[i] * (1.0 - tip) + tip_tint[i] * tip for i in range(3))
-        alpha = clamp(0.78 - 0.4 * tip - 0.2 * edge, 0.3, 0.82)
+        color = tuple(min(1.0, color[i] + 0.04 * (1.0 - edge)) for i in range(3))
+        alpha = clamp(0.8 - 0.45 * tip - 0.15 * edge, 0.3, 0.85)
         return (*color, alpha)
 
     return build_grid(10, 6, dorsal_func, dorsal_color)
@@ -255,22 +287,23 @@ def build_dorsal() -> AttributeBundle:
 
 def build_pectoral_left() -> AttributeBundle:
     def pectoral_func(u: float, v: float) -> Vec3:
-        spread = 0.22
-        x = lerp(0.02, 0.28, u)
-        y = -0.03 + math.sin(u * math.pi) * 0.06 - v * 0.02
-        z = 0.12 + (v - 0.5) * spread
-        x += math.sin((v - 0.5) * math.pi) * 0.03
-        y += math.sin(u * math.pi * 0.5) * 0.02
+        spread = 0.28
+        x = lerp(0.01, 0.32, u)
+        y = -0.035 + math.sin(u * math.pi * 0.9) * 0.07 - v * 0.02
+        z = 0.14 + (v - 0.5) * spread
+        x += math.sin((v - 0.5) * math.pi) * 0.035
+        y += math.sin(u * math.pi * 0.7) * 0.025
+        z += math.sin(u * math.pi * 1.3) * 0.015
         return (x, y, z)
 
     def pectoral_color(u: float, v: float, pos: Vec3, normal: Vec3) -> Tuple[float, float, float, float]:
-        root = smoothstep(0.0, 0.35, u)
-        tip = smoothstep(0.4, 1.0, u)
-        warm = (1.0, 0.74, 0.54)
-        cool = (1.0, 0.6, 0.46)
+        root = smoothstep(0.0, 0.28, u)
+        tip = smoothstep(0.45, 1.0, u)
+        warm = (1.0, 0.76, 0.58)
+        cool = (1.0, 0.6, 0.48)
         color = tuple(warm[i] * (1.0 - tip) + cool[i] * tip for i in range(3))
-        color = tuple(color[i] * (0.92 + 0.08 * root) for i in range(3))
-        alpha = clamp(0.72 - 0.35 * tip, 0.25, 0.78)
+        color = tuple(color[i] * (0.9 + 0.12 * root) for i in range(3))
+        alpha = clamp(0.74 - 0.4 * tip + 0.06 * (1.0 - abs(v - 0.5) * 2.0), 0.25, 0.82)
         return (*color, alpha)
 
     return build_grid(8, 4, pectoral_func, pectoral_color)
@@ -278,19 +311,21 @@ def build_pectoral_left() -> AttributeBundle:
 
 def build_pelvic() -> AttributeBundle:
     def pelvic_func(u: float, v: float) -> Vec3:
-        spread = 0.18
-        x = lerp(-0.12, 0.1, u)
-        y = -0.12 + (1 - u) * -0.04 + (v - 0.5) * 0.01
+        spread = 0.22
+        x = lerp(-0.16, 0.08, u)
+        y = -0.13 + (1 - u) * -0.05 + (v - 0.5) * 0.012
         z = (v - 0.5) * spread
-        y += math.sin(u * math.pi) * 0.04
+        y += math.sin(u * math.pi * 0.9) * 0.045
+        z += math.sin((v - 0.5) * math.pi) * 0.015
         return (x, y, z)
 
     def pelvic_color(u: float, v: float, pos: Vec3, normal: Vec3) -> Tuple[float, float, float, float]:
-        tip = smoothstep(0.2, 1.0, u)
-        blush = (1.0, 0.58, 0.42)
-        pale = (1.0, 0.78, 0.6)
+        tip = smoothstep(0.25, 1.0, u)
+        blush = (1.0, 0.62, 0.46)
+        pale = (1.0, 0.8, 0.62)
         color = tuple(pale[i] * (1.0 - tip) + blush[i] * tip for i in range(3))
-        alpha = clamp(0.7 - 0.4 * tip, 0.28, 0.75)
+        color = tuple(min(1.0, color[i] + 0.05 * (1.0 - abs(v - 0.5) * 2.0)) for i in range(3))
+        alpha = clamp(0.72 - 0.42 * tip, 0.28, 0.78)
         return (*color, alpha)
 
     return build_grid(6, 4, pelvic_func, pelvic_color)
