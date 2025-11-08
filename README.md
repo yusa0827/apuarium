@@ -51,3 +51,27 @@ ifconfig
 → ブラウザから http://192.168.1.100:8000 でアクセス
 
 ※ 0.0.0.0 はサーバー側の設定で、クライアントからアクセスするアドレスではありません。
+## Pythonベースの3D金魚シミュレーション
+GPU がない環境でも 3D 金魚を扱えるよう、完全に Python で動作するプロシージャルモデリングと描画パイプラインを追加しました。
+
+1. 依存パッケージをインストールします。
+   ```bash
+   pip install -r requirements.txt
+   ```
+2. プロシージャルに生成した金魚メッシュを OBJ として書き出したい場合は以下を実行します。
+   ```bash
+   python scripts/export_goldfish.py  # assets/goldfish.obj が生成されます
+   ```
+3. CPU レンダラで水槽シミュレーションを再生・保存するには次を実行します。
+   ```bash
+   python scripts/run_aquarium.py --fish 8 --seconds 45 --fps 20
+   ```
+   `--save` にファイルパス（例: `--save out.mp4`）を指定すると、Matplotlib のアニメーションとして保存できます。
+
+`aquarium3d/` パッケージには以下のモジュールが含まれます。
+
+- `goldfish.py`: 金魚のボディ・ヒレをスイープ生成し、OBJ に書き出せる三角メッシュを返します。
+- `simulation.py`: 単純な群泳アルゴリズムで水槽内を遊泳させる CPU シミュレーションを提供します。
+- `renderer.py`: Matplotlib で水槽・水面・金魚メッシュを描画し、アニメーション出力にも対応します。
+
+既存の FastAPI + WebSocket サーバーは `main.py` に残しているため、ブラウザ向け 2D 表示が必要な場合も従来どおり利用できます。
